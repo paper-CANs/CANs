@@ -1,17 +1,3 @@
-diff --git a/Makefile b/Makefile
-index 43cf2c785..8e7c595d4 100644
---- a/Makefile
-+++ b/Makefile
-@@ -1,7 +1,7 @@
- # SPDX-License-Identifier: GPL-2.0
- VERSION = 6
--PATCHLEVEL = 2
--SUBLEVEL = 7
-+PATCHLEVEL = 3
-+SUBLEVEL = 0
- EXTRAVERSION =
- NAME = Hurr durr I'ma ninja sloth
- 
 diff --git a/arch/x86/entry/vdso/stUIdlrG b/arch/x86/entry/vdso/stUIdlrG
 new file mode 100644
 index 000000000..a331df7ad
@@ -56,71 +42,66 @@ index dfc7d87fa..f391596ca 100644
  #define DRV_NAME	"veth"
  #define DRV_VERSION	"1.0"
 diff --git a/include/linux/cgroup-defs.h b/include/linux/cgroup-defs.h
-index 8a0d5466c..b7b85b636 100644
+index 8a0d5466c..193129e92 100644
 --- a/include/linux/cgroup-defs.h
 +++ b/include/linux/cgroup-defs.h
-@@ -374,11 +374,45 @@ struct cgroup_freezer_state {
+@@ -374,11 +374,47 @@ struct cgroup_freezer_state {
  	 */
  	int nr_frozen_tasks;
  };
 +struct ipc_ns_list {
-+	struct list_head list;	
++	struct list_head list;
 +	struct ipc_namespace *ipc_ns;
++	unsigned int residual_volume;
 +};
 +
 +struct net_ns_list {
-+	struct list_head list;	
++	struct list_head list;
 +	struct net *net_ns;
++	unsigned int residual_volume;
 +};
 +
 +struct pid_ns_list {
-+	struct list_head list;	
++	struct list_head list;
 +	struct pid_namespace *pid_ns;
 +};
  
 +extern struct ipc_ns_list *ipc_ns_list_init(void);
-+extern int ipc_ns_list_add_tail(struct ipc_ns_list *head, struct ipc_namespace *ipc_ns);
++extern int ipc_ns_list_add_tail(struct ipc_ns_list *head, struct ipc_namespace *ipc_ns, long mem_delta);
 +extern int ipc_ns_list_free(struct ipc_ns_list *head);
 +extern int ipc_ns_list_delete_elem(struct ipc_ns_list *head, struct ipc_namespace *ipc_ns);
-+extern int ipc_ns_list_insert(struct ipc_ns_list *head, struct ipc_namespace *ipc_ns);
++extern int ipc_ns_list_insert(struct ipc_ns_list *head, struct ipc_namespace *ipc_ns, long mem_delta); //
 +
 +extern struct net_ns_list *net_ns_list_init(void);
-+extern int net_ns_list_add_tail(struct net_ns_list *head, struct net *net_ns);
++extern int net_ns_list_add_tail(struct net_ns_list *head, struct net *net_ns, long mem_delta);
 +extern int net_ns_list_free(struct net_ns_list *head);
 +extern int net_ns_list_delete_elem(struct net_ns_list *head, struct net *net_ns);
-+extern int net_ns_list_insert(struct net_ns_list *head, struct net *net_ns);
++extern int net_ns_list_insert(struct net_ns_list *head, struct net *net_ns, long mem_delta);
 +
 +extern struct pid_ns_list *pid_ns_list_init(void);
 +extern int pid_ns_list_add_tail(struct pid_ns_list *head, struct pid_namespace *pid_ns);
 +extern int pid_ns_list_free(struct pid_ns_list *head);
 +extern int pid_ns_list_delete_elem(struct pid_ns_list *head, struct pid_namespace *pid_ns);
-+extern int pid_ns_list_insert(struct pid_ns_list *head, struct pid_namespace *pid_ns); 
++extern int pid_ns_list_insert(struct pid_ns_list *head, struct pid_namespace *pid_ns);
  struct cgroup {
  	/* self css with NULL ->ss, points back to this cgroup */
  	struct cgroup_subsys_state self;
  
-+	struct ipc_ns_list *ipc_list;   /*all ipc_ns the processes in this cgroup belong to */ 
++	struct ipc_ns_list *ipc_list;   /*all ipc_ns the processes in this cgroup belong to */
 +	struct net_ns_list *net_list;
 +	struct pid_ns_list *pid_list;
  	unsigned long flags;		/* "unsigned long" so bitops work */
  
  	/*
-@@ -838,4 +872,4 @@ struct sock_cgroup_data {
- 
- #endif	/* CONFIG_SOCK_CGROUP_DATA */
- 
--#endif	/* _LINUX_CGROUP_DEFS_H */
-+#endif	/* _LINUX_CGROUP_DEFS_H */
-\ No newline at end of file
 diff --git a/include/linux/cgroup.h b/include/linux/cgroup.h
-index 3410aecff..104e34cca 100644
+index 3410aecff..00262c054 100644
 --- a/include/linux/cgroup.h
 +++ b/include/linux/cgroup.h
 @@ -71,6 +71,7 @@ struct css_task_iter {
  extern struct file_system_type cgroup_fs_type;
  extern struct cgroup_root cgrp_dfl_root;
  extern struct css_set init_css_set;
-+extern struct cgroup *recycle_cgroup;
++extern struct cgroup *ballon_cgroup;
  
  #define SUBSYS(_x) extern struct cgroup_subsys _x ## _cgrp_subsys;
  #include <linux/cgroup_subsys.h>
@@ -128,31 +109,32 @@ index 3410aecff..104e34cca 100644
  #endif /* CONFIG_CGROUP_BPF */
  
  #endif /* _LINUX_CGROUP_H */
-+extern void recycle_cgroup_clear(int times);
-\ No newline at end of file
++extern unsigned long free_highest_volume(void);
 diff --git a/include/linux/inetdevice.h b/include/linux/inetdevice.h
-index ddb27fc0e..88d1c067c 100644
+index ddb27fc0e..e8d19ac6a 100644
 --- a/include/linux/inetdevice.h
 +++ b/include/linux/inetdevice.h
-@@ -298,6 +298,6 @@ static __inline__ int inet_mask_len(__be32 mask)
+@@ -298,6 +298,8 @@ static __inline__ int inet_mask_len(__be32 mask)
  		return 0;
  	return 32 - ffz(~hmask);
  }
 -
 -
++extern unsigned long devinet_size(struct ipv4_devconf *ipv4_p);
 +extern int devinet_move(struct ipv4_devconf *ipv4_p, struct mem_cgroup *from, struct mem_cgroup *to);
 +extern int ipv6_dev_move(struct inet6_dev *in_dev, struct mem_cgroup  *from, struct mem_cgroup  *to);
++extern unsigned long ipv6_size(struct inet6_dev *in_dev);
  #endif /* _LINUX_INETDEVICE_H */
 diff --git a/include/linux/ipc.h b/include/linux/ipc.h
-index e1c9eea60..805c6edbc 100644
+index e1c9eea60..16056f1e8 100644
 --- a/include/linux/ipc.h
 +++ b/include/linux/ipc.h
 @@ -10,6 +10,8 @@
  
  /* used by in-kernel data structures */
  struct kern_ipc_perm {
-+	struct cgroup *cgroup; 
-+	unsigned int residual_time;
++	struct cgroup *cgroup;
++	// unsigned int residual_time;
  	spinlock_t	lock;
  	bool		deleted;
  	int		id;
@@ -165,7 +147,7 @@ index e1c9eea60..805c6edbc 100644
  } ____cacheline_aligned_in_smp __randomize_layout;
  
 diff --git a/include/linux/ipc_namespace.h b/include/linux/ipc_namespace.h
-index e8240cf26..355e46e27 100644
+index e8240cf26..98ba3b463 100644
 --- a/include/linux/ipc_namespace.h
 +++ b/include/linux/ipc_namespace.h
 @@ -11,7 +11,9 @@
@@ -178,25 +160,25 @@ index e8240cf26..355e46e27 100644
  
  struct user_namespace;
  
-@@ -211,3 +213,15 @@ static inline bool setup_ipc_sysctls(struct ipc_namespace *ns)
+@@ -211,3 +213,16 @@ static inline bool setup_ipc_sysctls(struct ipc_namespace *ns)
  
  #endif /* CONFIG_SYSVIPC_SYSCTL */
  #endif
-+void free_recycle_ipcs(struct ipc_namespace *ns, struct ipc_ids *ids, int times,
++void free_recycle_ipcs(struct ipc_namespace *ns, struct ipc_ids *ids,
 +	       void (*free)(struct ipc_namespace *, struct kern_ipc_perm *));
-+extern int ipc_sem_move_check(struct ipc_namespace *ns, struct cgroup *cgrp);  
-+extern void ipc_sem_free(struct ipc_namespace *ns, int times);
++extern int ipc_sem_move_check(struct ipc_namespace *ns, struct cgroup *cgrp);
++extern void ipc_sem_free(struct ipc_namespace *ns);
 +
 +extern int ipc_shm_move_check(struct ipc_namespace *ns, struct cgroup *cgrp);
 +extern int ipc_shm_folio_move(struct inode *inode, struct mem_cgroup *from, struct mem_cgroup *to);
-+extern void ipc_shm_free(struct ipc_namespace *ns, int times);
++extern unsigned long shm_total_pages(struct inode *inode);
++extern void ipc_shm_free(struct ipc_namespace *ns);
 +
 +extern int ipc_msq_move_check(struct ipc_namespace *ns, struct cgroup *cgrp);
 +extern int ipc_msg_move(struct msg_msg *msg, struct mem_cgroup *from, struct mem_cgroup *to);
-+extern void ipc_msq_free(struct ipc_namespace *ns, int times);
-\ No newline at end of file
++extern void ipc_msq_free(struct ipc_namespace *ns);
 diff --git a/include/linux/memcontrol.h b/include/linux/memcontrol.h
-index 85dc9b88e..78372d598 100644
+index 85dc9b88e..57b1a3c05 100644
 --- a/include/linux/memcontrol.h
 +++ b/include/linux/memcontrol.h
 @@ -18,9 +18,11 @@
@@ -211,11 +193,21 @@ index 85dc9b88e..78372d598 100644
  
  struct mem_cgroup;
  struct obj_cgroup;
-@@ -1878,4 +1880,18 @@ static inline void obj_cgroup_uncharge_zswap(struct obj_cgroup *objcg,
+@@ -768,8 +770,8 @@ void lruvec_memcg_debug(struct lruvec *lruvec, struct folio *folio)
  }
  #endif
  
--#endif /* _LINUX_MEMCONTROL_H */
+-static inline
+-struct mem_cgroup *mem_cgroup_from_css(struct cgroup_subsys_state *css){
++static struct mem_cgroup *mem_cgroup_from_css(struct cgroup_subsys_state *css)
++{
+ 	return css ? container_of(css, struct mem_cgroup, css) : NULL;
+ }
+ 
+@@ -1878,4 +1880,20 @@ static inline void obj_cgroup_uncharge_zswap(struct obj_cgroup *objcg,
+ }
+ #endif
+ 
 +extern int _obj_cgroup_move(struct kmem_cache *s, struct slab *slab,
 +					void **p, int objects, struct obj_cgroup *to);
 +extern int kmem_cache_move(struct kmem_cache *s, void *addr,
@@ -226,14 +218,15 @@ index 85dc9b88e..78372d598 100644
 +extern struct mem_cgroup *get_cg_from_cgrp(struct cgroup *cgrp, const char *subsys_name);
 +
 +extern int memory_max_set(struct mem_cgroup *memcg, unsigned long max_pages);
-+#define RECYCLE_MEM_MAX (1 << 18)  
++#define RECYCLE_MEM_MAX (1 << 18)
 +extern long recycle_max_limit;
 +extern int page_set_shadow_max(struct mem_cgroup *from, struct mem_cgroup *to);
 +extern int kmem_cgroup_move(void *addr, struct mem_cgroup *from, struct mem_cgroup *to);
-+#endif /* _LINUX_MEMCONTROL_H */
-\ No newline at end of file
++extern unsigned long caculate_space(void *addr);
++extern int check_ballon_limits(unsigned long mem_delta);
+ #endif /* _LINUX_MEMCONTROL_H */
 diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
-index e6e02184c..c979dd61d 100644
+index e6e02184c..75321b3e6 100644
 --- a/include/linux/netdevice.h
 +++ b/include/linux/netdevice.h
 @@ -2018,6 +2018,9 @@ struct net_device {
@@ -242,7 +235,7 @@ index e6e02184c..c979dd61d 100644
  	struct dev_ifalias	__rcu *ifalias;
 +
 +	struct cgroup *cgroup;
-+	unsigned int residual_time;
++	// unsigned int residual_time;
  	/*
  	 *	I/O specific fields
  	 *	FIXME: Merge these and struct ifmap into one
@@ -251,16 +244,15 @@ index e6e02184c..c979dd61d 100644
  
  #endif	/* _LINUX_NETDEVICE_H */
 +extern int net_device_move_check(struct net *ns, struct cgroup *cgrp);
-\ No newline at end of file
 diff --git a/include/linux/pid_namespace.h b/include/linux/pid_namespace.h
-index 07481bb87..c6773e1a3 100644
+index 07481bb87..f630f304d 100644
 --- a/include/linux/pid_namespace.h
 +++ b/include/linux/pid_namespace.h
 @@ -92,3 +92,5 @@ static inline bool task_is_in_init_pid_ns(struct task_struct *tsk)
  }
  
  #endif /* _LINUX_PID_NS_H */
-+extern void check_pid_zombie(struct pid_namespace* pid_ns, struct cgroup * cgrp);
++extern void check_pid_zombie(struct pid_namespace *pid_ns, struct cgroup *cgrp);
 +extern int zombie_cgrp_insert_ns(struct task_struct *task, struct cgroup *cgrp);
 \ No newline at end of file
 diff --git a/include/linux/sem.h b/include/linux/sem.h
@@ -285,7 +277,7 @@ index 5608a500c..9646b89e4 100644
  
  struct sysv_sem {
 diff --git a/include/net/neighbour.h b/include/net/neighbour.h
-index 2f2a6023f..0f584afc6 100644
+index 2f2a6023f..b5a2c525d 100644
 --- a/include/net/neighbour.h
 +++ b/include/net/neighbour.h
 @@ -605,3 +605,5 @@ static inline void neigh_update_is_router(struct neighbour *neigh, u32 flags,
@@ -293,28 +285,18 @@ index 2f2a6023f..0f584afc6 100644
  }
  #endif
 +extern int neigh_move(struct neigh_parms *neigh_p, struct mem_cgroup *from, struct mem_cgroup *to);
-+
++extern unsigned long neigh_size(struct neigh_parms *neigh_p);
 diff --git a/include/net/net_namespace.h b/include/net/net_namespace.h
-index 78beaa765..3ff92a834 100644
+index 78beaa765..f75cbd356 100644
 --- a/include/net/net_namespace.h
 +++ b/include/net/net_namespace.h
-@@ -65,7 +65,7 @@ struct net {
- 						 * namespace should be freed.
- 						 */
- 	spinlock_t		rules_mod_lock;
--
-+	
- 	atomic_t		dev_unreg_count;
- 
- 	unsigned int		dev_base_seq;	/* protected by rtnl_mutex */
 @@ -542,3 +542,4 @@ static inline void net_ns_init(void) {}
  #endif
  
  #endif /* __NET_NET_NAMESPACE_H */
-+extern void net_device_free(struct net *ns, int times);
-\ No newline at end of file
++extern void net_device_free(struct net *ns);
 diff --git a/ipc/msg.c b/ipc/msg.c
-index fd08b3cb3..7d1c41cbd 100644
+index fd08b3cb3..3d481d8d9 100644
 --- a/ipc/msg.c
 +++ b/ipc/msg.c
 @@ -40,6 +40,7 @@
@@ -331,41 +313,49 @@ index fd08b3cb3..7d1c41cbd 100644
  }
 -
 +struct msg_queue *find_msq_from_perm(struct kern_ipc_perm *perm);
-+extern int ipc_msq_move(struct msg_queue *msq, struct mem_cgroup *from, struct mem_cgroup *to);
++int ipc_msq_move(struct msg_queue *msq, struct mem_cgroup *from, struct mem_cgroup *to);
  /**
   * newque - Create a new msg queue
   * @ns: namespace
-@@ -294,10 +296,40 @@ static void freeque(struct ipc_namespace *ns, struct kern_ipc_perm *ipcp)
- 	ipc_update_pid(&msq->q_lrpid, NULL);
+@@ -295,9 +297,48 @@ static void freeque(struct ipc_namespace *ns, struct kern_ipc_perm *ipcp)
  	ipc_rcu_putref(&msq->q_perm, msg_rcu_free);
  }
-+void msg_tag(struct kern_ipc_perm *ipcp, struct ipc_namespace *ns){
+ 
++int ipc_msq_size(struct msg_queue *msq)
++{
++	return caculate_space(msq);
++}
++
++void msg_tag(struct kern_ipc_perm *ipcp, struct ipc_namespace *ns)
++{
 +	struct msg_queue *msq;
 +	struct mem_cgroup *memcg_owner, *memcg_recycle;
 +	struct cgroup *cgrp_owner;
 +
 +	memcg_owner = mem_cgroup_from_task(current);
-+	if(!memcg_owner)
++	if (!memcg_owner)
 +		return;
- 
++
 +	cgrp_owner = memcg_owner->css.cgroup;
-+	if(!cgrp_owner)
++	if (!cgrp_owner)
 +		return;
 +
 +
-+	if(ipcp->cgroup == recycle_cgroup){ //move the resources
++	if (ipcp->cgroup == ballon_cgroup) { //move the resources
 +		msq = find_msq_from_perm(ipcp);
-+		if(!msq)
++		if (!msq)
 +			return;
-+		memcg_recycle = get_cg_from_cgrp(recycle_cgroup, "memory");
++		memcg_recycle = get_cg_from_cgrp(ballon_cgroup, "memory");
++		ipc_ns_list_insert(ballon_cgroup->ipc_list, ns, -ipc_msq_size(msq));
 +		ipc_msq_move(msq, memcg_recycle, memcg_owner);
 +	}
-+	ipcp->cgroup = cgrp_owner;  
-+	ipc_ns_list_insert(cgrp_owner->ipc_list, ns);
++	ipcp->cgroup = cgrp_owner;
++	ipc_ns_list_insert(cgrp_owner->ipc_list, ns, 0);
 +
 +}
-+extern void ipc_msq_free(struct ipc_namespace *ns, int times){
-+	free_recycle_ipcs(ns, &msg_ids(ns), times, freeque);
++extern void ipc_msq_free(struct ipc_namespace *ns)
++{
++	free_recycle_ipcs(ns, &msg_ids(ns),freeque);
 +}
  long ksys_msgget(key_t key, int msgflg)
  {
@@ -376,29 +366,29 @@ index fd08b3cb3..7d1c41cbd 100644
  	static const struct ipc_ops msg_ops = {
  		.getnew = newque,
  		.associate = security_msg_queue_associate,
-@@ -309,7 +341,20 @@ long ksys_msgget(key_t key, int msgflg)
+@@ -309,7 +350,20 @@ long ksys_msgget(key_t key, int msgflg)
  	msg_params.key = key;
  	msg_params.flg = msgflg;
  
 -	return ipcget(ns, &msg_ids(ns), &msg_ops, &msg_params);
 +	err = ipcget(ns, &msg_ids(ns), &msg_ops, &msg_params);
-+	if(err >= 0){
++	if (err >= 0) {
 +		down_write(&msg_ids(ns).rwsem);
 +		ipcp = ipc_findkey(&msg_ids(ns), key);
-+		if(!ipcp)
++		if (!ipcp)
 +			goto no_lock;
 +
-+		msg_tag(ipcp,ns);
++		msg_tag(ipcp, ns);
 +		ipc_unlock(ipcp);
 +
-+	no_lock:
++no_lock:
 +		up_write(&msg_ids(ns).rwsem);
 +	}
 +	return err;
  }
  
  SYSCALL_DEFINE2(msgget, key_t, key, int, msgflg)
-@@ -1374,3 +1419,93 @@ void __init msg_init(void)
+@@ -1374,3 +1428,99 @@ void __init msg_init(void)
  				"       key      msqid perms      cbytes       qnum lspid lrpid   uid   gid  cuid  cgid      stime      rtime      ctime\n",
  				IPC_MSG_IDS, sysvipc_msg_proc_show);
  }
@@ -406,95 +396,101 @@ index fd08b3cb3..7d1c41cbd 100644
 +struct msg_queue *find_msq_from_perm(struct kern_ipc_perm *perm)
 +{
 +	struct msg_queue *msq = container_of(perm, struct msg_queue, q_perm);
-+	return msq; 
++	return msq;
 +}
-+extern int ipc_msq_move(struct msg_queue *msq, struct mem_cgroup *from, struct mem_cgroup *to){
++int ipc_msq_move(struct msg_queue *msq, struct mem_cgroup *from, struct mem_cgroup *to)
++{
 +	struct msg_msg *msg, *t;
 +	int err = 0;
++
 +	list_for_each_entry_safe(msg, t, &msq->q_messages, m_list) {
 +		err = ipc_msg_move(msg, from, to);
-+		if(err < 0)
++		if (err < 0)
 +			return err;
 +	}
 +	err = kmem_cgroup_move(msq, from, to);
 +	return err;
 +}
 +
-+extern int ipc_msq_move_check(struct ipc_namespace *ns, struct cgroup *cgrp)  
++int ipc_msq_move_check(struct ipc_namespace *ns, struct cgroup *cgrp)
 +{
 +	struct ipc_ids *ids;
 +	struct kern_ipc_perm *perm;
 +	int next_id;
 +	int total, in_use;
-+	struct msg_queue *msq; 
++	struct msg_queue *msq;
 +	bool MAX_SET = true;
-+	int clear_times = 5;
++	// int clear_times = 5;
++	unsigned long mem_volume, tmp, extra_mount = 0;
 +	struct mem_cgroup *memcg_to, *memcg_from = get_cg_from_cgrp(cgrp, "memory");
-+	ids =  &msg_ids(ns);
-+	if(ids == NULL)
++	ids = &msg_ids(ns);
++	if (ids == NULL)
 +		return 0;
-+	
-+	if(memcg_from == NULL)
++
++	if (memcg_from == NULL)
 +		return 0;
-+	
++
 +	in_use = ids->in_use;
 +	for (total = 0, next_id = 0; total < in_use; next_id++) {
 +		perm = idr_find(&ids->ipcs_idr, next_id);
-+		if (perm == NULL){
++		if (perm == NULL) {
 +			total++;
 +			continue;
 +		}
 +
-+		msq = find_msq_from_perm(perm); 
-+		if(msq == NULL ){
++		msq = find_msq_from_perm(perm);
++		if (msq == NULL) {
 +			total++;
 +			continue;
 +		}
-+		
-+		if(perm->cgroup == NULL){
++
++		if (perm->cgroup == NULL) {
 +			down_write(&msg_ids(ns).rwsem);
 +			rcu_read_lock();
 +			ipc_lock_object(perm);
 +			freeque(ns, perm);
 +			up_write(&msg_ids(ns).rwsem);
 +			total++;
-+			continue;			
++			continue;
 +		}
 +
-+		if(perm->cgroup == recycle_cgroup)
-+			perm->residual_time++;
++		// if (perm->cgroup == ballon_cgroup)
++		// 	perm->residual_time++;
 +
-+		if(perm->cgroup == cgrp)   
-+		{	
-+			memcg_to = get_cg_from_cgrp(recycle_cgroup, "memory");
-+			if(!memcg_to){
++		if (perm->cgroup == cgrp) {
++			memcg_to = get_cg_from_cgrp(ballon_cgroup, "memory");
++			if (!memcg_to)
 +				return 0;
-+			}	
 +
-+			if(MAX_SET){
++			if (MAX_SET) {
 +				page_set_shadow_max(memcg_from, memcg_to);
 +				MAX_SET = false;
 +			}
++			mem_volume = ipc_msq_size(msq);
 +
-+			perm->residual_time = 0;
-+			perm->cgroup = recycle_cgroup; 
-+			ipc_ns_list_insert(recycle_cgroup->ipc_list, ns);
-+
-+			if(ipc_msq_move(msq, memcg_from, memcg_to) < 0)	
++			while (check_ballon_limits(mem_volume))//if the left volume is not enough
 +			{
-+				recycle_cgroup_clear(clear_times);
-+				if(clear_times > 0)
-+					clear_times--;
-+			}				
++				extra_mount = free_highest_volume();
++				while(1){
++					if(!check_ballon_limits(mem_volume))
++						break;
++					else {
++						cond_resched();
++					}
++				}
++			}
++
++			perm->cgroup = ballon_cgroup;
++			ipc_ns_list_insert(ballon_cgroup->ipc_list, ns, mem_volume);
++			ipc_msq_move(msq, memcg_from, memcg_to);
 +		}
 +		total++;
 +	}
-+
-+	return 0;	
++	return 0;
 +}
 \ No newline at end of file
 diff --git a/ipc/msgutil.c b/ipc/msgutil.c
-index d0a0e877c..486a6418f 100644
+index d0a0e877c..b9f5e34f8 100644
 --- a/ipc/msgutil.c
 +++ b/ipc/msgutil.c
 @@ -15,6 +15,7 @@
@@ -505,31 +501,32 @@ index d0a0e877c..486a6418f 100644
  
  #include "util.h"
  
-@@ -182,3 +183,21 @@ void free_msg(struct msg_msg *msg)
+@@ -182,3 +183,23 @@ void free_msg(struct msg_msg *msg)
  		seg = tmp;
  	}
  }
-+extern int ipc_msg_move(struct msg_msg *msg, struct mem_cgroup *from, struct mem_cgroup *to){
++extern int ipc_msg_move(struct msg_msg *msg, struct mem_cgroup *from, struct mem_cgroup *to)
++{
 +	struct msg_msgseg *seg;
 +	int err;
++
 +	seg = msg->next;
 +	err = kmem_cgroup_move(msg, from, to);
-+	if(err < 0)
++	if (err < 0)
 +		return err;
 +	while (seg != NULL) {
 +		struct msg_msgseg *tmp = seg->next;
 +
 +		cond_resched();
 +		err = kmem_cgroup_move(seg, from, to);
-+		if(err < 0)
++		if (err < 0)
 +			return err;
 +		seg = tmp;
 +	}
 +	return err;
 +}
-\ No newline at end of file
 diff --git a/ipc/namespace.c b/ipc/namespace.c
-index 8316ea585..8a2ac3133 100644
+index 8316ea585..4803ac3bd 100644
 --- a/ipc/namespace.c
 +++ b/ipc/namespace.c
 @@ -16,6 +16,8 @@
@@ -549,17 +546,18 @@ index 8316ea585..8a2ac3133 100644
  	return ns;
  
  fail_mq:
-@@ -128,6 +129,80 @@ void free_ipcs(struct ipc_namespace *ns, struct ipc_ids *ids,
+@@ -128,6 +129,85 @@ void free_ipcs(struct ipc_namespace *ns, struct ipc_ids *ids,
  	up_write(&ids->rwsem);
  }
  
 +struct ipc_ns_list *ipc_ns_list_init(void)
 +{
 +	struct ipc_ns_list *head;
++
 +	head = kmalloc(sizeof(struct ipc_ns_list), GFP_KERNEL);
-+	if(head == NULL){
++	if (head == NULL)
 +		return NULL;
-+	}
++
 +	INIT_LIST_HEAD(&(head->list));
 +	return head;
 +}
@@ -568,61 +566,65 @@ index 8316ea585..8a2ac3133 100644
 +-1: insert failed
 +0: insert success
 +*/
-+int ipc_ns_list_add_tail(struct ipc_ns_list *head, struct ipc_namespace *ipc_ns){
++int ipc_ns_list_add_tail(struct ipc_ns_list *head, struct ipc_namespace *ipc_ns, long mem_delta)
++{
 +	struct ipc_ns_list *new_node;
++
 +	new_node = kmalloc(sizeof(struct ipc_ns_list), GFP_KERNEL);
-+	if(new_node == NULL)
++	if (new_node == NULL)
 +		return -1;
-+	
++
 +	memset(new_node, 0, sizeof(struct ipc_ns_list));
 +	new_node->ipc_ns = ipc_ns;
-+	
++	new_node->residual_volume = mem_delta;
++
 +	list_add_tail(&(new_node->list), &(head->list));
 +	return 0;
 +}
-+int ipc_ns_list_free(struct ipc_ns_list *head){
++int ipc_ns_list_free(struct ipc_ns_list *head)
++{
 +	struct ipc_ns_list *p, *q;
-+    list_for_each_entry_safe(p, q, &(head->list), list)
-+    {
++
++    list_for_each_entry_safe(p, q, &(head->list), list) {
 +		list_del(&(p->list));
 +		kfree(p);
-+    }    	
++    }
 +	list_del(&(head->list));
 +	kfree(head);
 +	return 0;
 +}
 +/*
 +-1: list empty
-+-2: not found 
++-2: not found
 +*/
 +int ipc_ns_list_delete_elem(struct ipc_ns_list *head, struct ipc_namespace *ipc_ns)
 +{
-+	struct ipc_ns_list *pos;
-+	if(list_empty(&(head->list)))
-+	{
++	struct ipc_ns_list *pos, *q;
++
++	if (list_empty(&(head->list)))
 +		return -1;
-+	}
-+	list_for_each_entry(pos,  &(head->list), list){
-+		if(pos->ipc_ns == ipc_ns)
-+		{
++	list_for_each_entry_safe(pos, q, &(head->list), list) {
++		if (pos->ipc_ns == ipc_ns) {
 +			list_del(&(pos->list));
 +			kfree(pos);
-+			return 0;
 +		}
 +	}
-+	return -2;
++	return 0;
 +}
-+int ipc_ns_list_insert(struct ipc_ns_list *head, struct ipc_namespace *ipc_ns)
++int ipc_ns_list_insert(struct ipc_ns_list *head, struct ipc_namespace *ipc_ns, long mem_delta)  //
 +{
-+	int err;
++	int err = 1;
 +	struct ipc_ns_list *pos;
-+	list_for_each_entry(pos, &(head->list), list){ 
-+		if(pos->ipc_ns == ipc_ns)
++
++	list_for_each_entry(pos, &(head->list), list) {
++		if (pos->ipc_ns == ipc_ns)
 +		{
-+			return 0;
++			pos->residual_volume += mem_delta;
++			err = 0;
 +		}
 +	}
-+	err = ipc_ns_list_add_tail(head, ipc_ns);  
++	if(err)
++		err = ipc_ns_list_add_tail(head, ipc_ns, mem_delta);
 +	return err;
 +}
 +
@@ -630,11 +632,11 @@ index 8316ea585..8a2ac3133 100644
  static void free_ipc_ns(struct ipc_namespace *ns)
  {
  	/* mq_put_mnt() waits for a grace period as kern_unmount()
-@@ -239,3 +314,27 @@ const struct proc_ns_operations ipcns_operations = {
+@@ -239,3 +319,27 @@ const struct proc_ns_operations ipcns_operations = {
  	.install	= ipcns_install,
  	.owner		= ipcns_owner,
  };
-+void free_recycle_ipcs(struct ipc_namespace *ns, struct ipc_ids *ids, int times,
++void free_recycle_ipcs(struct ipc_namespace *ns, struct ipc_ids *ids,
 +	       void (*free)(struct ipc_namespace *, struct kern_ipc_perm *))
 +{
 +	struct kern_ipc_perm *perm;
@@ -649,7 +651,7 @@ index 8316ea585..8a2ac3133 100644
 +		perm = idr_find(&ids->ipcs_idr, next_id);
 +		if (perm == NULL)
 +			continue;
-+		if(perm->residual_time >= times && perm->cgroup == recycle_cgroup){
++		if (perm->cgroup == ballon_cgroup) {
 +			rcu_read_lock();
 +			ipc_lock_object(perm);
 +			free(ns, perm);
@@ -658,40 +660,49 @@ index 8316ea585..8a2ac3133 100644
 +	}
 +	up_write(&ids->rwsem);
 +}
-\ No newline at end of file
 diff --git a/ipc/sem.c b/ipc/sem.c
-index 00f88aa01..2384e5ead 100644
+index 00f88aa01..11f4b9f8c 100644
 --- a/ipc/sem.c
 +++ b/ipc/sem.c
-@@ -87,7 +87,9 @@
+@@ -87,7 +87,10 @@
  #include <linux/sched/wake_q.h>
  #include <linux/nospec.h>
  #include <linux/rhashtable.h>
 -
 +#include <linux/cgroup-defs.h>
 +#include <linux/memcontrol.h>
++#include <linux/page_counter.h>
 +#include <linux/delay.h>
  #include <linux/uaccess.h>
  #include "util.h"
  
-@@ -583,7 +585,89 @@ static int newary(struct ipc_namespace *ns, struct ipc_params *params)
- 
+@@ -584,6 +587,104 @@ static int newary(struct ipc_namespace *ns, struct ipc_params *params)
  	return sma->sem_perm.id;
  }
+ 
 +struct sem_array *find_sem_from_perm(struct kern_ipc_perm *perm)
 +{
-+	struct sem_array *sma = container_of(perm, struct sem_array, sem_perm); 
-+	return sma; 
++	struct sem_array *sma = container_of(perm, struct sem_array, sem_perm);
++	return sma;
 +}
-+extern int ipc_sem_move(struct sem_array *sma, struct mem_cgroup *from, struct mem_cgroup *to){
++
++unsigned long ipc_sem_size(struct sem_array *sma)
++{
++	return caculate_space(sma);
++}
++
++int ipc_sem_move(struct sem_array *sma, struct mem_cgroup *from, struct mem_cgroup *to)
++{
 +	return obj_cgroup_move(sma, from, to);
 +}
-+extern void ipc_sem_free(struct ipc_namespace *ns, int times){
-+	free_recycle_ipcs(ns, &sem_ids(ns), times, freeary);
++
++void ipc_sem_free(struct ipc_namespace *ns)
++{
++	free_recycle_ipcs(ns, &sem_ids(ns), freeary);
 +}
 +
 +
-+extern int ipc_sem_move_check(struct ipc_namespace *ns, struct cgroup *cgrp)   
++int ipc_sem_move_check(struct ipc_namespace *ns, struct cgroup *cgrp)
 +{
 +	struct ipc_ids *ids;
 +	struct kern_ipc_perm *perm;
@@ -699,101 +710,111 @@ index 00f88aa01..2384e5ead 100644
 +	int total, in_use;
 +	struct sem_array *sma;
 +	bool MAX_SET = true;
-+	int clear_times = 5;
++	unsigned long mem_volume, extra_mount = 0;
 +	struct mem_cgroup *memcg_to, *memcg_from = get_cg_from_cgrp(cgrp, "memory");
++
 +	ids =  &sem_ids(ns);
-+	if(ids == NULL)
++	if (ids == NULL)
 +		return 0;
 +
-+	if(memcg_from == NULL)
++	if (memcg_from == NULL)
 +		return 0;
- 
++
 +	in_use = ids->in_use;
 +	for (total = 0, next_id = 0; total < in_use; next_id++) {
 +		perm = idr_find(&ids->ipcs_idr, next_id);
-+		if (perm == NULL){
-+			total++;			
++		if (perm == NULL) {
++			total++;
 +			continue;
 +		}
 +		sma = find_sem_from_perm(perm);
 +
-+		if(sma == NULL){
++		if (sma == NULL) {
 +			total++;
 +			continue;
 +		}
 +
-+		if(perm->cgroup == NULL){
++		if (perm->cgroup == NULL) {
 +			down_write(&sem_ids(ns).rwsem);
 +			rcu_read_lock();
 +			ipc_lock_object(perm);
 +			freeary(ns, perm);
 +			up_write(&sem_ids(ns).rwsem);
 +			total++;
-+			continue;			
++			continue;
 +		}
 +
-+		if(perm->cgroup == recycle_cgroup)
-+			perm->residual_time++;
-+		
-+
-+		if(perm->cgroup == cgrp){ //belongs to the exiting cgorup. 
-+			memcg_to = get_cg_from_cgrp(recycle_cgroup, "memory");
-+			if(!memcg_to){
++		if (perm->cgroup == cgrp) { //belongs to the exiting cgorup.
++			memcg_to = get_cg_from_cgrp(ballon_cgroup, "memory");
++			if (!memcg_to)
 +				return 0;
-+			}	
 +
-+			if(MAX_SET){
++			if (MAX_SET) {
 +				page_set_shadow_max(memcg_from, memcg_to);
 +				MAX_SET = false;
 +			}
 +
-+			perm->residual_time = 0;
-+			perm->cgroup = recycle_cgroup; 
-+			ipc_ns_list_insert(recycle_cgroup->ipc_list, ns);
++			mem_volume = ipc_sem_size(sma);
++			while (check_ballon_limits(mem_volume))//if the left volume is not enough
++			{
++				extra_mount = free_highest_volume();
++				while(1){
++					if(!check_ballon_limits(mem_volume))
++						break;
++					else {
++						cond_resched();
++					}
++				}
++			}
++			if(extra_mount > 0)
++				extra_mount -=  mem_volume;
 +
-+			if(ipc_sem_move(sma, memcg_from, memcg_to) < 0){
-+				recycle_cgroup_clear(clear_times);
-+				if(clear_times > 0)
-+					clear_times--;
-+			}	
++			ipc_ns_list_insert(ballon_cgroup->ipc_list, ns, mem_volume);
++			perm->cgroup = ballon_cgroup;
++			ipc_sem_move(sma, memcg_from, memcg_to);
 +		}
 +		total++;
 +	}
-+	return 0;	
++	return 0;
 +}
++
  
  /*
   * Called with sem_ids.rwsem and ipcp locked.
-@@ -598,10 +682,42 @@ static int sem_more_checks(struct kern_ipc_perm *ipcp, struct ipc_params *params
+@@ -598,10 +699,46 @@ static int sem_more_checks(struct kern_ipc_perm *ipcp, struct ipc_params *params
  
  	return 0;
  }
-+void sem_tag(struct kern_ipc_perm *ipcp, struct ipc_namespace *ns){
++void sem_tag(struct kern_ipc_perm *ipcp, struct ipc_namespace *ns)
++{
 +	struct sem_array *sma;
 +	struct mem_cgroup *memcg_owner, *memcg_recycle;
 +	struct cgroup *cgrp_owner;
++
 +	memcg_owner = mem_cgroup_from_task(current);
-+	if(!memcg_owner)
++	if (!memcg_owner)
 +		return;
 +
 +	cgrp_owner = memcg_owner->css.cgroup;
-+	if(!cgrp_owner)
++	if (!cgrp_owner)
 +		return;
 +
-+	ipc_ns_list_insert(cgrp_owner->ipc_list, ns);
++	ipc_ns_list_insert(cgrp_owner->ipc_list, ns, 0);
 +
-+	if(!ipcp)
++	if (!ipcp)
 +		return;
 +
-+	if(ipcp->cgroup == recycle_cgroup){
++	if (ipcp->cgroup == ballon_cgroup) {
 +		sma = find_sem_from_perm(ipcp);
-+		if(!sma)
++		if (!sma)
 +			return;
-+		memcg_recycle = get_cg_from_cgrp(recycle_cgroup, "memory");
-+		if(!memcg_recycle){
-+			return;		
-+		}
-+		obj_cgroup_move(sma, memcg_recycle, memcg_owner);
++
++		memcg_recycle = get_cg_from_cgrp(ballon_cgroup, "memory");
++		if (!memcg_recycle)
++			return;
++
++		ipc_ns_list_insert(ballon_cgroup->ipc_list, ns, -ipc_sem_size(sma));
++		ipc_sem_move(sma, memcg_recycle, memcg_owner);
 +	}
 +	ipcp->cgroup = cgrp_owner;
 +}
@@ -807,18 +828,18 @@ index 00f88aa01..2384e5ead 100644
  	static const struct ipc_ops sem_ops = {
  		.getnew = newary,
  		.associate = security_sem_associate,
-@@ -618,7 +734,20 @@ long ksys_semget(key_t key, int nsems, int semflg)
+@@ -618,7 +755,20 @@ long ksys_semget(key_t key, int nsems, int semflg)
  	sem_params.flg = semflg;
  	sem_params.u.nsems = nsems;
  
 -	return ipcget(ns, &sem_ids(ns), &sem_ops, &sem_params);
 +	err = ipcget(ns, &sem_ids(ns), &sem_ops, &sem_params);
-+	if(err >= 0){
++	if (err >= 0) {
 +		down_write(&sem_ids(ns).rwsem);
 +		ipcp = ipc_findkey(&sem_ids(ns), key);
 +		sem_tag(ipcp, ns);
 +
-+		if(!ipcp)
++		if (!ipcp)
 +			goto no_lock;
 +
 +		ipc_unlock(ipcp);
@@ -830,7 +851,7 @@ index 00f88aa01..2384e5ead 100644
  
  SYSCALL_DEFINE3(semget, key_t, key, int, nsems, int, semflg)
 diff --git a/ipc/shm.c b/ipc/shm.c
-index bd2fcc4d4..db5f7e82f 100644
+index bd2fcc4d4..04d93a2b0 100644
 --- a/ipc/shm.c
 +++ b/ipc/shm.c
 @@ -44,6 +44,7 @@
@@ -849,43 +870,70 @@ index bd2fcc4d4..db5f7e82f 100644
  static void shm_open(struct vm_area_struct *vma);
  static void shm_close(struct vm_area_struct *vma);
  static void shm_destroy(struct ipc_namespace *ns, struct shmid_kernel *shp);
-@@ -827,10 +829,45 @@ static int shm_more_checks(struct kern_ipc_perm *ipcp, struct ipc_params *params
+@@ -827,10 +829,72 @@ static int shm_more_checks(struct kern_ipc_perm *ipcp, struct ipc_params *params
  
  	return 0;
  }
 +struct shmid_kernel *find_shp_from_perm(struct kern_ipc_perm *perm)
 +{
-+	struct shmid_kernel *shp = container_of(perm, struct shmid_kernel, shm_perm); 
-+	return shp; 
++	struct shmid_kernel *shp = container_of(perm, struct shmid_kernel, shm_perm);
++	return shp;
 +}
 +
-+void shm_tag(struct kern_ipc_perm *ipcp, struct ipc_namespace *ns){
++extern unsigned long ipc_shm_size(struct shmid_kernel *shp)
++{
++	unsigned long space = 0;
++	struct file *file;
++	struct inode *inode;
++
++	space += caculate_space(shp);
++
++	file = shp->shm_file;
++	if (!file)
++		return space;
++
++	inode = file->f_inode;
++	if (!inode)
++		return space;
++
++	space += shm_total_pages(inode) * PAGE_SIZE;
++
++	return space;
++}
++
++
++void shm_tag(struct kern_ipc_perm *ipcp, struct ipc_namespace *ns)
++{
 +	struct shmid_kernel *shp;
 +	struct mem_cgroup *memcg_owner, *memcg_recycle;
 +	struct cgroup *cgrp_owner;
-+	
++
 +	memcg_owner = mem_cgroup_from_task(current);
-+	if(!memcg_owner)
++	if (!memcg_owner)
 +		return;
 +
 +	cgrp_owner = memcg_owner->css.cgroup;
-+	if(!cgrp_owner)
++	if (!cgrp_owner)
 +		return;
 +
-+	if(ipcp->cgroup == recycle_cgroup){
++	if (ipcp->cgroup == ballon_cgroup) {
 +		shp = find_shp_from_perm(ipcp);
-+		if(!shp)
++		if (!shp)
 +			return;
-+		memcg_recycle = get_cg_from_cgrp(recycle_cgroup, "memory");
-+		ipc_shm_move(shp, memcg_recycle, memcg_owner);	
++		memcg_recycle = get_cg_from_cgrp(ballon_cgroup, "memory");
++		ipc_ns_list_insert(ballon_cgroup->ipc_list, ns, -ipc_shm_size(shp));
++		ipc_shm_move(shp, memcg_recycle, memcg_owner);
 +	}
++
++	ipcp->cgroup = cgrp_owner;
++	ipc_ns_list_insert(cgrp_owner->ipc_list, ns, 0);
++}
++
++extern void ipc_shm_free(struct ipc_namespace *ns)
++{
++	free_recycle_ipcs(ns, &shm_ids(ns), do_shm_rmid);
++}
  
-+	ipcp->cgroup = cgrp_owner;  
-+	ipc_ns_list_insert(cgrp_owner->ipc_list, ns);	
-+}
-+extern void ipc_shm_free(struct ipc_namespace *ns, int times){
-+	free_recycle_ipcs(ns, &shm_ids(ns), times, do_shm_rmid);
-+}
  long ksys_shmget(key_t key, size_t size, int shmflg)
  {
  	struct ipc_namespace *ns;
@@ -895,45 +943,47 @@ index bd2fcc4d4..db5f7e82f 100644
  	static const struct ipc_ops shm_ops = {
  		.getnew = newseg,
  		.associate = security_shm_associate,
-@@ -844,7 +881,20 @@ long ksys_shmget(key_t key, size_t size, int shmflg)
+@@ -844,7 +908,20 @@ long ksys_shmget(key_t key, size_t size, int shmflg)
  	shm_params.flg = shmflg;
  	shm_params.u.size = size;
  
 -	return ipcget(ns, &shm_ids(ns), &shm_ops, &shm_params);
 +	err = ipcget(ns, &shm_ids(ns), &shm_ops, &shm_params);
-+	if(err >= 0 ){
++	if (err >= 0) {
 +		down_write(&shm_ids(ns).rwsem);
 +		ipcp = ipc_findkey(&shm_ids(ns), key);
-+		if(!ipcp)
++		if (!ipcp)
 +			goto no_lock;
 +
 +		shm_tag(ipcp, ns);
 +
 +		ipc_unlock(ipcp);
-+	no_lock:
++no_lock:
 +		up_write(&shm_ids(ns).rwsem);
 +	}
 +	return err;
  }
  
  SYSCALL_DEFINE3(shmget, key_t, key, size_t, size, int, shmflg)
-@@ -1881,3 +1931,91 @@ static int sysvipc_shm_proc_show(struct seq_file *s, void *it)
+@@ -1881,3 +1958,100 @@ static int sysvipc_shm_proc_show(struct seq_file *s, void *it)
  	return 0;
  }
  #endif
-+extern int ipc_shm_move(struct shmid_kernel *shp, struct mem_cgroup *from, struct mem_cgroup *to){
++
++extern int ipc_shm_move(struct shmid_kernel *shp, struct mem_cgroup *from, struct mem_cgroup *to)
++{
 +	int err;
 +	struct file *file;
 +	struct inode *inode;
 +
 +	file = shp->shm_file;
-+	if(!file){
-+		return 0;		
-+	}
-+	inode = file->f_inode;
-+	if(!inode){
++	if (!file)
 +		return 0;
-+	}
++
++	inode = file->f_inode;
++	if (!inode)
++		return 0;
++
 +	err = obj_cgroup_move(shp, from, to);
 +	err = ipc_shm_folio_move(inode, from, to);
 +	return err;
@@ -942,74 +992,80 @@ index bd2fcc4d4..db5f7e82f 100644
 +
 +int ipc_shm_move_check(struct ipc_namespace *ns, struct cgroup *cgrp)
 +{
-+
 +	struct ipc_ids *ids;
 +	struct kern_ipc_perm *perm;
 +	int next_id;
 +	int total, in_use;
 +	struct shmid_kernel *shp;
 +	bool MAX_SET = true;
-+	int clear_times = 5;
++	unsigned long mem_volume, tmp, extra_mount = 0;;
++	// int clear_times = 5;
 +	struct mem_cgroup *memcg_to, *memcg_from = get_cg_from_cgrp(cgrp, "memory");
++
 +	ids =  &shm_ids(ns);
 +
-+	if(ids == NULL)
++	if (ids == NULL)
 +		return 0;
 +
-+	if(memcg_from == NULL)
++	if (memcg_from == NULL)
 +		return 0;
 +
 +	in_use = ids->in_use;
 +	for (total = 0, next_id = 0; total < in_use; next_id++) {
 +		perm = idr_find(&ids->ipcs_idr, next_id);
-+		if (perm == NULL){
++		if (perm == NULL) {
 +			total++;
 +			continue;
 +		}
 +
 +		shp = find_shp_from_perm(perm);
-+		if(shp == NULL){
++		if (shp == NULL) {
 +			total++;
 +			continue;
 +		}
-+		if(perm->cgroup == NULL){
++		if (perm->cgroup == NULL) {
 +			down_write(&shm_ids(ns).rwsem);
 +			rcu_read_lock();
 +			ipc_lock_object(perm);
 +			do_shm_rmid(ns, perm);
 +			up_write(&shm_ids(ns).rwsem);
 +			total++;
-+			continue;			
++			continue;
 +		}
-+		if(perm->cgroup == recycle_cgroup)
-+			perm->residual_time++;
 +
-+		if(perm->cgroup == cgrp)  
-+		{			
-+			memcg_to = get_cg_from_cgrp(recycle_cgroup, "memory");
-+			if(!memcg_to){
++		if (perm->cgroup == cgrp) {
++			memcg_to = get_cg_from_cgrp(ballon_cgroup, "memory");
++			if (!memcg_to)
 +				return 0;
-+			}	
-+			if(MAX_SET){
++
++			if (MAX_SET) {
 +				page_set_shadow_max(memcg_from, memcg_to);
 +				MAX_SET = false;
 +			}
-+			perm->residual_time = 0;			
-+			perm->cgroup = recycle_cgroup; 
-+			ipc_ns_list_insert(recycle_cgroup->ipc_list, ns);
 +
-+			if(ipc_shm_move(shp, memcg_from, memcg_to) < 0)	
++			mem_volume = ipc_shm_size(shp);
++			printk("mem_volume = %uld", mem_volume);
++
++			while (check_ballon_limits(mem_volume))//if the left volume is not enough
 +			{
-+				recycle_cgroup_clear(clear_times);
-+				if(clear_times > 0)
-+					clear_times--;
-+			}				
++				extra_mount = free_highest_volume();
++				while(1){
++					if(!check_ballon_limits(mem_volume))
++						break;
++					else {
++						cond_resched();
++					}
++				}
++			}
++
++			perm->cgroup = ballon_cgroup;
++			ipc_ns_list_insert(ballon_cgroup->ipc_list, ns, mem_volume);
++			ipc_shm_move(shp, memcg_from, memcg_to);
 +		}
 +		total++;
 +	}
-+	return 0;	
++	return 0;
 +}
-\ No newline at end of file
 diff --git a/ipc/util.c b/ipc/util.c
 index 05cb9de66..6522916a6 100644
 --- a/ipc/util.c
@@ -1063,7 +1119,7 @@ index 52bb5a74a..0ffda2b19 100644
  {
  	struct cgroup *cgrp = kn->priv;
 diff --git a/kernel/cgroup/cgroup.c b/kernel/cgroup/cgroup.c
-index c099cf3fa..4ae5816ad 100644
+index c099cf3fa..6548b577c 100644
 --- a/kernel/cgroup/cgroup.c
 +++ b/kernel/cgroup/cgroup.c
 @@ -58,8 +58,24 @@
@@ -1091,21 +1147,23 @@ index c099cf3fa..4ae5816ad 100644
  #define CREATE_TRACE_POINTS
  #include <trace/events/cgroup.h>
  
-@@ -5706,6 +5722,13 @@ static bool cgroup_check_hierarchy_limits(struct cgroup *parent)
- fail:
+@@ -5707,6 +5723,15 @@ static bool cgroup_check_hierarchy_limits(struct cgroup *parent)
  	return ret;
  }
-+void cgroup_recycle_init(struct cgroup *cgrp){
-+	if(!cgrp)
+ 
++void cgroup_recycle_init(struct cgroup *cgrp)
++{
++	if (!cgrp)
 +		return;
 +	cgrp->ipc_list = ipc_ns_list_init();
 +	cgrp->net_list = net_ns_list_init();
 +	cgrp->pid_list = pid_ns_list_init();
 +}
- 
++
  int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
  {
-@@ -5730,7 +5753,7 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
+ 	struct cgroup *parent, *cgrp;
+@@ -5730,7 +5755,7 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
  		ret = PTR_ERR(cgrp);
  		goto out_unlock;
  	}
@@ -1114,25 +1172,26 @@ index c099cf3fa..4ae5816ad 100644
  	/*
  	 * This extra ref will be put in cgroup_free_fn() and guarantees
  	 * that @cgrp->kn is always accessible.
-@@ -5841,6 +5864,132 @@ static void kill_css(struct cgroup_subsys_state *css)
+@@ -5841,6 +5866,199 @@ static void kill_css(struct cgroup_subsys_state *css)
  	percpu_ref_kill_and_confirm(&css->refcnt, css_killed_ref_fn);
  }
  
-+struct mem_cgroup *get_cg_from_cgrp(struct cgroup *cgrp, const char *subsys_name){
++struct mem_cgroup *get_cg_from_cgrp(struct cgroup *cgrp, const char *subsys_name)
++{
 +	struct cgroup_subsys_state *css;
 +	struct mem_cgroup *memcg;
-+	if(!cgrp){
++
++	if (!cgrp)
 +		return NULL;
-+	}
-+	for(int i = 0; i < CGROUP_SUBSYS_COUNT; i++){
-+		if(strcmp(subsys_name, cgroup_subsys_name[i]) == 0)
-+		{
++
++	for (int i = 0; i < CGROUP_SUBSYS_COUNT; i++) {
++		if (strcmp(subsys_name, cgroup_subsys_name[i]) == 0) {
 +			css = cgrp->subsys[i];
 +			break;
 +		}
 +	}
 +	memcg = mem_cgroup_from_css(css);
-+	return 	memcg;
++	return memcg;
 +}
 +
 +static int memcg_ipc_check(struct cgroup *cgrp)
@@ -1140,27 +1199,27 @@ index c099cf3fa..4ae5816ad 100644
 +	struct ipc_ns_list *head;
 +	struct ipc_namespace *ipc_ns;
 +	struct ipc_ns_list *pos;
++
 +	head = cgrp->ipc_list;
-+	if(head == NULL){
++
++	if (head == NULL)
 +		return 0;
-+	}
-+	list_for_each_entry(pos, &head->list, list){
++
++	list_for_each_entry(pos, &head->list, list) {
 +		ipc_ns = pos->ipc_ns;
-+		if(ipc_ns ==NULL)
-+			continue;	
-+		if(ipc_ns->used_sems != 0){
++		if (ipc_ns == NULL)
++			continue;
++		if (ipc_ns->used_sems != 0)
 +			ipc_sem_move_check(ipc_ns, cgrp);
-+		}
 +
-+		if(ipc_ns->shm_tot != 0)
-+		{
++		if (ipc_ns->shm_tot != 0)
 +			ipc_shm_move_check(ipc_ns, cgrp);
-+		}
-+		ipc_msq_move_check(ipc_ns, cgrp);			
++
++		ipc_msq_move_check(ipc_ns, cgrp);
 +	}
 +
-+	ipc_ns_list_free(cgrp->ipc_list);  
-+	cgrp->ipc_list=NULL;
++	ipc_ns_list_free(cgrp->ipc_list);
++	cgrp->ipc_list = NULL;
 +	return 0;
 +}
 +
@@ -1170,96 +1229,160 @@ index c099cf3fa..4ae5816ad 100644
 +	struct net *net_ns;
 +	struct net_ns_list *pos;
 +	head = cgrp->net_list;
-+	if(head == NULL){
++
++	if (head == NULL)
 +		return 0;
-+	}
-+	list_for_each_entry(pos, &head->list, list){
++
++	list_for_each_entry(pos, &head->list, list) {
 +		net_ns = pos->net_ns;
-+		if(net_ns ==NULL)
++		if (net_ns == NULL)
 +			return 0;
-+		
-+		if(!list_empty(&net_ns->dev_base_head)){
++
++		if (!list_empty(&net_ns->dev_base_head))
 +			net_device_move_check(net_ns, cgrp);
-+		}
++
 +	}
-+	net_ns_list_free(cgrp->net_list); 
-+	cgrp->net_list=NULL;
++	net_ns_list_free(cgrp->net_list);
++	cgrp->net_list = NULL;
 +	return 0;
-+} 
++}
++
 +static int pid_check(struct cgroup *cgrp)
 +{
 +	struct pid_ns_list *head;
 +	struct pid_namespace *pid_ns;
 +	struct pid_ns_list *pos;
++
 +	head = cgrp->pid_list;
-+	if(head == NULL){
++
++	if (head == NULL)
 +		return 0;
-+	}
-+	list_for_each_entry(pos, &head->list, list){
++
++	list_for_each_entry(pos, &head->list, list) {
 +		pid_ns = pos->pid_ns;
-+		if(pid_ns ==NULL)
-+			continue;	
++		if (pid_ns == NULL)
++			continue;
 +		check_pid_zombie(pid_ns, cgrp);
 +	}
 +
-+	pid_ns_list_free(cgrp->pid_list);  
-+	cgrp->pid_list=NULL;
++	pid_ns_list_free(cgrp->pid_list);
++	cgrp->pid_list = NULL;
 +	return 0;
 +}
 +
-+static void ipc_residual_clear(int times){
++
++
++static struct ipc_ns_list *find_higheset_ipc_ns(void)
++{
 +	struct ipc_ns_list *head;
 +	struct ipc_namespace *ipc_ns;
-+	struct ipc_ns_list *pos;
-+	head = recycle_cgroup->ipc_list;
-+	if(head == NULL){
-+		return;
-+	}
-+	list_for_each_entry(pos, &head->list, list){
++	struct ipc_ns_list *pos, *max_pos = NULL;
++	unsigned long max_volume = 0;
++	printk("find_higheset_ipc_ns 1\n");
++	head = ballon_cgroup->ipc_list;
++
++	if (head == NULL)
++		return NULL;
++
++	list_for_each_entry(pos, &head->list, list) {
++		printk("find_higheset_ipc_ns 2\n");
 +		ipc_ns = pos->ipc_ns;
-+		if(ipc_ns ==NULL)
-+			continue;	
-+		ipc_sem_free(ipc_ns, times);
-+		ipc_shm_free(ipc_ns, times);
-+		ipc_msq_free(ipc_ns, times);			
++		if (ipc_ns == NULL)
++			continue;
++		printk("find_higheset_ipc_ns 4\n");
++		if(max_volume < pos->residual_volume)
++		{
++			max_volume = pos->residual_volume;
++			max_pos = pos;
++			printk("find_higheset_ipc_ns 5,%d,%x\n",max_volume,max_pos);
++		}
 +	}
++	return max_pos;
 +}
-+static void net_residual_clear(int times){
++static struct net_ns_list *find_higheset_net_ns(void)
++{
 +	struct net_ns_list *head;
 +	struct net *net_ns;
-+	struct net_ns_list *pos;
-+	head = recycle_cgroup->net_list;
-+	if(head == NULL){
-+		return;
-+	}
-+	list_for_each_entry(pos, &head->list, list){
-+		net_ns = pos->net_ns;
-+		if(net_ns ==NULL)
-+			return;
++	struct net_ns_list *pos, *max_pos = NULL;
++	unsigned long max_volume = 0;
 +
-+		net_device_free(net_ns, times);
++	head = ballon_cgroup->net_list;
++
++	if (head == NULL)
++		return NULL;
++
++	list_for_each_entry(pos, &head->list, list) {
++		net_ns = pos->net_ns;
++		if (net_ns == NULL)
++			continue;
++		if (max_volume < pos->residual_volume)
++		{
++			max_volume = pos->residual_volume;
++			max_pos = pos;
++		}
 +	}
++	return max_pos;
 +}
-+extern void recycle_cgroup_clear(int times){
-+	ipc_residual_clear(times);
-+	net_residual_clear(times);
++
++static void ipc_residual_clear(struct ipc_namespace *ipc_ns)
++{
++	ipc_sem_free(ipc_ns);
++	printk("ipc_residual_clear 1\n");
++	ipc_shm_free(ipc_ns);
++	ipc_msq_free(ipc_ns);
++}
++
++static void net_residual_clear(struct net *net_ns)
++{
++	net_device_free(net_ns);
++}
++
++extern unsigned long free_highest_volume(void)
++{
++	struct ipc_ns_list *ipc_max;
++	struct net_ns_list *net_max;
++	unsigned long space = 0;
++	printk("free_highest_volume 1\n");
++	ipc_max = find_higheset_ipc_ns();
++	net_max = find_higheset_net_ns();
++	printk("free_highest_volume 2\n");
++
++	if(net_max == NULL && ipc_max == NULL)
++		return 0;
++	if (ipc_max == NULL)
++		goto net;
++	
++	if (net_max == NULL ||  net_max->residual_volume < ipc_max->residual_volume) {
++		space = ipc_max->residual_volume;
++		ipc_residual_clear(ipc_max->ipc_ns);
++		printk("free_highest_volume 3\n");
++		ipc_ns_list_delete_elem(ballon_cgroup->ipc_list, ipc_max->ipc_ns);
++		printk("free_highest_volume 4\n");
++		return space;
++	}
++net:
++	printk("free_highest_volume 5\n");
++
++	space = net_max->residual_volume;
++	net_residual_clear(net_max->net_ns);
++	net_ns_list_delete_elem(ballon_cgroup->net_list, net_max->net_ns);
++
++	return space;
 +}
  /**
   * cgroup_destroy_locked - the first stage of cgroup destruction
   * @cgrp: cgroup to be destroyed
-@@ -5945,7 +6094,10 @@ int cgroup_rmdir(struct kernfs_node *kn)
+@@ -5945,6 +6163,9 @@ int cgroup_rmdir(struct kernfs_node *kn)
  	cgrp = cgroup_kn_lock_live(kn, false);
  	if (!cgrp)
  		return 0;
--
 +	memcg_ipc_check(cgrp);
 +	memcg_net_check(cgrp);
 +	pid_check(cgrp);
-+	 
+ 
  	ret = cgroup_destroy_locked(cgrp);
  	if (!ret)
- 		TRACE_CGROUP_PATH(rmdir, cgrp);
-@@ -5959,6 +6111,7 @@ static struct kernfs_syscall_ops cgroup_kf_syscall_ops = {
+@@ -5959,6 +6180,7 @@ static struct kernfs_syscall_ops cgroup_kf_syscall_ops = {
  	.mkdir			= cgroup_mkdir,
  	.rmdir			= cgroup_rmdir,
  	.show_path		= cgroup_show_path,
@@ -1267,17 +1390,19 @@ index c099cf3fa..4ae5816ad 100644
  };
  
  static void __init cgroup_init_subsys(struct cgroup_subsys *ss, bool early)
-@@ -6050,6 +6203,48 @@ int __init cgroup_init_early(void)
+@@ -6050,6 +6272,50 @@ int __init cgroup_init_early(void)
  	}
  	return 0;
  }
-+struct cgroup *recycle_cgroup;
-+void recycle_cgroup_create(void) {
++struct cgroup *ballon_cgroup;
++void recycle_cgroup_create(void)
++{
 +	struct kernfs_node *root_kn;
-+	struct mem_cgroup * memcg;
++	struct mem_cgroup *memcg;
 +	struct cgroup *cgrp = ERR_PTR(-ENOENT);
 +	struct cgroup *root_cgrp;
 +	int ret;
++
 +	root_cgrp = current_cgns_cgroup_dfl();
 +	root_kn = root_cgrp->kn;
 +	cgrp = cgroup_create(root_cgrp, "recycle.slice", S_IRWXU | S_IRGRP | S_IROTH);
@@ -1285,7 +1410,7 @@ index c099cf3fa..4ae5816ad 100644
 +	 * This extra ref will be put in cgroup_free_fn() and guarantees
 +	 * that @cgrp->kn is always accessible.
 +	 */
-+	kernfs_get(cgrp->kn);	
++	kernfs_get(cgrp->kn);
 +	ret = cgroup_kn_set_ugid(cgrp->kn);
 +	if (ret)
 +		goto out_destroy;
@@ -1294,7 +1419,7 @@ index c099cf3fa..4ae5816ad 100644
 +	if (ret)
 +		goto out_destroy;
 +
-+	ret = cgroup_apply_control_enable(cgrp);  
++	ret = cgroup_apply_control_enable(cgrp);
 +
 +	if (ret)
 +		goto out_destroy;
@@ -1306,17 +1431,17 @@ index c099cf3fa..4ae5816ad 100644
 +	cgroup_recycle_init(cgrp);
 +	goto out_unlock;
 +
-+out_destroy:	
++out_destroy:
 +	cgroup_destroy_locked(cgrp);
 +
-+out_unlock:	
-+	recycle_cgroup = cgrp;
++out_unlock:
++	ballon_cgroup = cgrp;
 +}
-+EXPORT_SYMBOL(recycle_cgroup);
++EXPORT_SYMBOL(ballon_cgroup);
  
  /**
   * cgroup_init - cgroup initialization
-@@ -6151,7 +6346,7 @@ int __init cgroup_init(void)
+@@ -6151,7 +6417,7 @@ int __init cgroup_init(void)
  #ifdef CONFIG_CPUSETS
  	WARN_ON(register_filesystem(&cpuset_fs_type));
  #endif
@@ -1347,123 +1472,131 @@ index 7695e60bc..0328aefb5 100644
  		/* Only log the first time events_limit is incremented. */
  		if (atomic64_inc_return(&pids->events_limit) == 1) {
 diff --git a/kernel/exit.c b/kernel/exit.c
-index f2afdb0ad..6ce826d78 100644
+index f2afdb0ad..e7abaacfc 100644
 --- a/kernel/exit.c
 +++ b/kernel/exit.c
-@@ -1920,3 +1920,17 @@ __weak __function_aligned void abort(void)
+@@ -1920,3 +1920,18 @@ __weak __function_aligned void abort(void)
  	panic("Oops failed to kill thread");
  }
  EXPORT_SYMBOL(abort);
-+extern void check_pid_zombie(struct pid_namespace* pid_ns, struct cgroup * cgrp){
-+    struct task_struct *tmp, *reaper, *pos;
-+    struct cgroup *to;
++void check_pid_zombie(struct pid_namespace *pid_ns, struct cgroup *cgrp)
++{
++	struct task_struct *tmp, *reaper, *pos;
++	struct cgroup *to;
 +
-+    reaper = pid_ns->child_reaper;
-+    if (list_empty(&reaper->children)) 
++	reaper = pid_ns->child_reaper;
++	if (list_empty(&reaper->children))
 +		return;
-+    list_for_each_entry_safe(pos, tmp, &reaper->children, sibling) {  
++
++	list_for_each_entry_safe(pos, tmp, &reaper->children, sibling) {
 +		to = task_cgroup(pos, pids_cgrp_id);
-+		if(pos->exit_state == EXIT_ZOMBIE && to == cgrp){  
++		if (pos->exit_state == EXIT_ZOMBIE && to == cgrp)
 +			release_task(pos);
-+		}
-+    }
++	}
 +}
-\ No newline at end of file
 diff --git a/kernel/pid_namespace.c b/kernel/pid_namespace.c
-index fc21c5d5f..c320fcc93 100644
+index fc21c5d5f..97ef1261a 100644
 --- a/kernel/pid_namespace.c
 +++ b/kernel/pid_namespace.c
-@@ -476,3 +476,89 @@ static __init int pid_namespaces_init(void)
+@@ -476,3 +476,98 @@ static __init int pid_namespaces_init(void)
  }
  
  __initcall(pid_namespaces_init);
-+struct pid_ns_list *pid_ns_list_init(void) 
++struct pid_ns_list *pid_ns_list_init(void)
 +{
 +	struct pid_ns_list *head;
++
 +	head = kmalloc(sizeof(struct pid_ns_list), GFP_KERNEL);
-+	if(head == NULL){
++	if (head == NULL)
 +		return NULL;
-+	}
++
 +	INIT_LIST_HEAD(&(head->list));
 +	return head;
 +}
 +
-+int pid_ns_list_add_tail(struct pid_ns_list *head, struct pid_namespace *pid_ns){
++int pid_ns_list_add_tail(struct pid_ns_list *head, struct pid_namespace *pid_ns)
++{
 +	struct pid_ns_list *new_node;
++
 +	new_node = kmalloc(sizeof(struct pid_ns_list), GFP_KERNEL);
-+	if(new_node == NULL)
++	if (new_node == NULL)
 +		return -1;
-+	
++
 +	memset(new_node, 0, sizeof(struct pid_ns_list));
 +	new_node->pid_ns = pid_ns;
-+	
++
 +	list_add_tail(&(new_node->list), &(head->list));
 +	return 0;
 +}
-+int pid_ns_list_free(struct pid_ns_list *head){  
++
++int pid_ns_list_free(struct pid_ns_list *head)
++{
 +	struct pid_ns_list *p, *q;
-+    list_for_each_entry_safe(p, q, &(head->list), list){
++
++    list_for_each_entry_safe(p, q, &(head->list), list) {
 +		list_del(&(p->list));
 +		kfree(p);
-+    }    	
++    }
 +	list_del(&(head->list));
 +	kfree(head);
 +	return 0;
 +}
 +
-+int pid_ns_list_delete_elem(struct pid_ns_list *head, struct pid_namespace *pid_ns) 
++int pid_ns_list_delete_elem(struct pid_ns_list *head, struct pid_namespace *pid_ns)
 +{
 +	struct pid_ns_list *pos;
-+	if(list_empty(&(head->list)))
-+	{
++
++	if (list_empty(&(head->list)))
 +		return -1;
-+	}
-+	list_for_each_entry(pos,  &(head->list), list){
-+		if(pos->pid_ns == pid_ns)
-+		{
-+				list_del(&(pos->list));
-+				kfree(pos);
++
++	list_for_each_entry(pos,  &(head->list), list) {
++		if (pos->pid_ns == pid_ns) {
++			list_del(&(pos->list));
++			kfree(pos);
 +			return 0;
 +		}
 +	}
 +	return 0;
 +}
-+int pid_ns_list_insert(struct pid_ns_list *head, struct pid_namespace *pid_ns) 
++
++int pid_ns_list_insert(struct pid_ns_list *head, struct pid_namespace *pid_ns)
 +{
 +	int err;
 +	struct pid_ns_list *pos;
-+	if(!head)
++
++	if (!head)
 +		return 0;
-+	list_for_each_entry(pos, &(head->list), list){ 
-+		if(pos->pid_ns == pid_ns)
-+            return 0;
++	list_for_each_entry(pos, &(head->list), list) {
++		if (pos->pid_ns == pid_ns)
++			return 0;
 +	}
-+	err = pid_ns_list_add_tail(head, pid_ns); 
++	err = pid_ns_list_add_tail(head, pid_ns);
 +	return err;
 +}
 +
-+extern int zombie_cgrp_insert_ns(struct task_struct *tsk, struct cgroup *cgrp){
++extern int zombie_cgrp_insert_ns(struct task_struct *tsk, struct cgroup *cgrp)
++{
 +	struct pid *pid;
 +	struct pid_namespace *ns;
 +	int ret;
++
 +	pid = tsk->thread_pid;
-+	if(!pid)
-+		return 0;
-+	
-+	ns = pid->numbers[pid->level].ns;
-+	if(!ns)
++	if (!pid)
 +		return 0;
 +
-+	if(!cgrp)
++	ns = pid->numbers[pid->level].ns;
++	if (!ns)
 +		return 0;
-+	
-+	if(!cgrp->pid_list)
++
++	if (!cgrp)
 +		return 0;
-+	
++
++	if (!cgrp->pid_list)
++		return 0;
++
 +	ret = pid_ns_list_insert(cgrp->pid_list, ns);
 +	return ret;
 +}
-\ No newline at end of file
 diff --git a/kernel/sysctl.c b/kernel/sysctl.c
 index 1c240d2c9..c77f9fc15 100644
 --- a/kernel/sysctl.c
@@ -1483,7 +1616,7 @@ index 1c240d2c9..c77f9fc15 100644
  	{
  		.procname	= "tainted",
 diff --git a/mm/memcontrol.c b/mm/memcontrol.c
-index 2eee092f8..8cbf901a4 100644
+index 2eee092f8..29af08834 100644
 --- a/mm/memcontrol.c
 +++ b/mm/memcontrol.c
 @@ -63,6 +63,7 @@
@@ -1503,27 +1636,30 @@ index 2eee092f8..8cbf901a4 100644
  
  struct cgroup_subsys memory_cgrp_subsys __read_mostly;
  EXPORT_SYMBOL(memory_cgrp_subsys);
-@@ -7814,3 +7817,164 @@ static int __init mem_cgroup_swap_init(void)
+@@ -7814,3 +7817,219 @@ static int __init mem_cgroup_swap_init(void)
  subsys_initcall(mem_cgroup_swap_init);
  
  #endif /* CONFIG_SWAP */
 +
 +int _obj_cgroup_move(struct kmem_cache *s, struct slab *slab,
-+					void **p, int objects, struct obj_cgroup *to){
++					void **p, int objects, struct obj_cgroup *to)
++{
 +	struct obj_cgroup **objcgs;
 +	int i;
++
 +	objcgs = slab_objcgs(slab);
-+	if (!objcgs)	
++	if (!objcgs)
 +		return 0;
 +
 +	for (i = 0; i < objects; i++) {
 +		struct obj_cgroup *objcg;
 +		unsigned int off;
++
 +		off = obj_to_index(s, slab, p[i]);
 +		objcg = objcgs[off];
 +		if (!objcg)
 +			continue;
-+		objcgs[off] = to;  
++		objcgs[off] = to;
 +		obj_cgroup_uncharge(objcg, obj_full_size(s));
 +		obj_cgroup_charge(to, GFP_KERNEL, obj_full_size(s));
 +		mod_objcg_state(objcg, slab_pgdat(slab), cache_vmstat_idx(s),
@@ -1533,79 +1669,81 @@ index 2eee092f8..8cbf901a4 100644
 +	}
 +	return 0;
 +}
-+extern int kmem_cache_move(struct kmem_cache *s, void *addr, int objects, struct mem_cgroup *to){
-+	unsigned long space = mem_cgroup_margin(to);
++
++int kmem_cache_move(struct kmem_cache *s, void *addr, int objects, struct mem_cgroup *to)
++{
 +	s = cache_from_obj(s, addr);
-+	if(space < obj_full_size(s))
-+		return -1;
 +	return _obj_cgroup_move(s, virt_to_slab(addr), &addr, objects, to->objcg);
 +}
-+extern int kmem_folio_move(struct folio *folio,  struct mem_cgroup *from, struct mem_cgroup *to){
++int kmem_folio_move(struct folio *folio,  struct mem_cgroup *from, struct mem_cgroup *to)
++{
 +	struct obj_cgroup *objcg_to, *objcg_from;
 +	int ret;
 +	unsigned int order;
 +	unsigned long space;
++
 +	objcg_to = to->objcg;
-+	if(!from || !to)
-+		return 0;	
-+	
-+	if(!objcg_to)
++	if (!from || !to)
 +		return 0;
-+	
++
++	if (!objcg_to)
++		return 0;
++
 +	objcg_from = from->objcg;
-+	if(!objcg_from)
++	if (!objcg_from)
 +		return 0;
-+	
++
 +	space = mem_cgroup_margin(to);
-+	order = folio_order(folio);  
-+	if(space < (1 << order))  {
++	order = folio_order(folio);
++	if (space < (1 << order))
 +		return -1;
-+	}
-+	__mem_cgroup_uncharge(folio);  
-+	ret = charge_memcg(folio, to, GFP_KERNEL & ~__GFP_DIRECT_RECLAIM);  
++
++	__mem_cgroup_uncharge(folio);
++	ret = charge_memcg(folio, to, GFP_KERNEL & ~__GFP_DIRECT_RECLAIM);
 +
 +	return ret;
 +}
 +
-+extern int kmem_cgroup_move(void *addr, struct mem_cgroup *from, struct mem_cgroup *to){  
++int kmem_cgroup_move(void *addr, struct mem_cgroup *from, struct mem_cgroup *to)
++{
 +	struct folio *folio;
 +	struct obj_cgroup *objcg_to, *objcg_from;
 +	struct slab *slab;
 +	struct kmem_cache *s;
 +	unsigned int order;
 +	int ret = 0;
-+	unsigned long space = mem_cgroup_margin(to);
++
 +	folio = virt_to_folio(addr);
-+	if(folio == NULL)
++
++	if (folio == NULL)
 +		return 0;
-+	
++
 +	objcg_to = to->objcg;
 +	objcg_from = from->objcg;
-+	if(objcg_to == NULL || objcg_from == NULL)
++	if (objcg_to == NULL || objcg_from == NULL)
 +		return 0;
-+	
-+	if(folio_test_slab(folio)){   
-+		slab = folio_slab(folio);  
-+		if(slab == NULL)
-+			return 0;
-+		
-+		s = slab->slab_cache;  
-+		if(s == NULL)
-+			return 0;
-+		
-+		if(space < obj_full_size(s))
-+			return -1;
-+		ret = _obj_cgroup_move(s, virt_to_slab((void *)addr), &addr, 1, objcg_to);
-+	}
-+	else{ 
-+		order = folio_order(folio); 
 +
-+		if(space < (1 << order)) 
-+			return -1;
-+		
++	if (folio_test_slab(folio)) {
++		slab = folio_slab(folio);
++		if (slab == NULL)
++			return 0;
++
++		s = slab->slab_cache;
++		if (s == NULL)
++			return 0;
++
++		// if (space * PAGE_SIZE < obj_full_size(s))
++		// 	return -1;
++		ret = _obj_cgroup_move(s, virt_to_slab((void *)addr), &addr, 1, objcg_to);
++	} else {
++		order = folio_order(folio);
++
++		// if (space < (1 << order))
++		// 	return -1;
++
 +		ret = obj_cgroup_charge_pages(objcg_to, GFP_KERNEL & ~__GFP_DIRECT_RECLAIM, 1 << order);
 +		if (!ret) {
-+			folio->memcg_data = (unsigned long)objcg_to |  
++			folio->memcg_data = (unsigned long)objcg_to |
 +				MEMCG_DATA_KMEM;
 +			obj_cgroup_uncharge_pages(objcg_from, 1 << order);
 +			return 0;
@@ -1614,63 +1752,113 @@ index 2eee092f8..8cbf901a4 100644
 +	return ret;
 +}
 +EXPORT_SYMBOL(kmem_cgroup_move);
-+extern int obj_cgroup_move(void *addr, struct mem_cgroup *from, struct mem_cgroup *to){  
-+		struct vm_struct *area;
-+		int i,ret;
-+		unsigned long space = mem_cgroup_margin(to);
++extern int obj_cgroup_move(void *addr, struct mem_cgroup *from, struct mem_cgroup *to)
++{
++	struct vm_struct *area;
++	int i, ret;
 +
-+	if (is_vmalloc_addr(addr)){ 
++	if (is_vmalloc_addr(addr)) {
 +		area = find_vm_area(addr);
-+		if(area ==NULL)
++		if (area == NULL)
 +			return 0;
-+		
-+
-+		if(space < area->nr_pages) 
-+			return -1;
 +
 +		for (i = 0; i < area->nr_pages; i++) {
 +			struct page *page = area->pages[i];
-+			if(!page)
++
++			if (!page)
 +				return 0;
-+			
-+			try_charge(to, GFP_KERNEL & ~__GFP_DIRECT_RECLAIM, 1); 
-+			return 0;
++
++			try_charge(to, GFP_KERNEL & ~__GFP_DIRECT_RECLAIM, 1);
 +			mem_cgroup_move_account(page, 0, from, to);
 +		}
-+	}
-+	else{  
++	} else {
 +		ret = kmem_cgroup_move(addr, from, to);
 +	}
 +	return ret;
 +}
 +
-+int memory_max_set(struct mem_cgroup *memcg, unsigned long max_pages)   
++int memory_max_set(struct mem_cgroup *memcg, unsigned long max_pages)
 +{
-+	if(memcg->memory.max > recycle_max_limit)
-+	{
++	if (memcg->memory.max > recycle_max_limit) {
 +		xchg(&memcg->memory.max, max_pages);
 +		return 0;
 +	}
-+	if(max_pages > memcg->memory.max)
++	if (max_pages > memcg->memory.max)
 +		xchg(&memcg->memory.max, max_pages);
 +	return 0;
 +}
-+int page_set_shadow_max(struct mem_cgroup *from, struct mem_cgroup *to)   
++int page_set_shadow_max(struct mem_cgroup *from, struct mem_cgroup *to)
 +{
 +	unsigned long from_max = from->memory.max;
 +	unsigned long to_max = to->memory.max;
 +	unsigned long tmp_from = recycle_max_limit;
 +	unsigned long tmp_to = recycle_max_limit;
-+	if(to_max <  recycle_max_limit)
++
++	if (to_max <  recycle_max_limit)
 +		tmp_to = to_max;
-+	if(from_max < recycle_max_limit)
++	if (from_max < recycle_max_limit)
 +		tmp_from = from_max;
 +	memory_max_set(to, max(tmp_from, tmp_to));
 +	return 0;
 +}
++/**
++ * caculate_space - Calculate how much memory the given object occupies.
++ * @addr: the address of the given object.
++ *
++ * Returns the maximum amount of memory @addr occupies, in
++ * bytes.
++ */
++unsigned long caculate_space(void *addr)
++{
++	struct vm_struct *area;
++	unsigned long space;
++
++	if (is_vmalloc_addr(addr)) {
++		area = find_vm_area(addr);
++		if (area == NULL)
++			return 0;
++		space = area->nr_pages * PAGE_SIZE;
++	} else {
++		struct folio *folio;
++		struct slab *slab;
++		struct kmem_cache *s;
++		unsigned int order;
++
++		folio = virt_to_folio(addr);
++
++		if (folio == NULL)
++			return 0;
++
++		if (folio_test_slab(folio)) {
++			slab = folio_slab(folio);
++			if (slab == NULL)
++				return 0;
++
++			s = slab->slab_cache;
++			if (s == NULL)
++				return 0;
++
++			space = obj_full_size(s);
++		} else {
++			order = folio_order(folio);
++			space = (1 << order) * PAGE_SIZE;
++		}
++	}
++	return space;
++}
++
++int check_ballon_limits(unsigned long mem_delta)
++{
++	struct mem_cgroup *memcg_ballon = get_cg_from_cgrp(ballon_cgroup, "memory");
++
++	if(mem_cgroup_margin(memcg_ballon)*PAGE_SIZE < mem_delta)
++		return 1;
++
++	return 0;
++}
 \ No newline at end of file
 diff --git a/mm/shmem.c b/mm/shmem.c
-index 0005ab2c2..a7fdb6218 100644
+index 0005ab2c2..2baa5034f 100644
 --- a/mm/shmem.c
 +++ b/mm/shmem.c
 @@ -39,6 +39,8 @@
@@ -1682,12 +1870,42 @@ index 0005ab2c2..a7fdb6218 100644
  #include "swap.h"
  
  static struct vfsmount *shm_mnt;
-@@ -4349,3 +4351,35 @@ struct page *shmem_read_mapping_page_gfp(struct address_space *mapping,
+@@ -4349,3 +4351,65 @@ struct page *shmem_read_mapping_page_gfp(struct address_space *mapping,
  #endif
  }
  EXPORT_SYMBOL_GPL(shmem_read_mapping_page_gfp);
++extern unsigned long shm_total_pages(struct inode *inode)
++{
++	struct address_space *mapping = inode->i_mapping;
++	loff_t lstart = 0;
++	pgoff_t start = (lstart + PAGE_SIZE - 1) >> PAGE_SHIFT;
++	pgoff_t end = -1;
++	struct folio_batch fbatch;
++	struct folio *folio;
++	pgoff_t indices[PAGEVEC_SIZE];
++	pgoff_t index;
++	int i;
++	unsigned long pages = 0;
 +
-+extern int ipc_shm_folio_move(struct inode *inode, struct mem_cgroup *from, struct mem_cgroup *to){
++	folio_batch_init(&fbatch);
++	index = start;
++	while (index < end && find_lock_entries(mapping, &index, end - 1,
++			&fbatch, indices)) {
++		for (i = 0; i < folio_batch_count(&fbatch); i++) {
++			folio = fbatch.folios[i];
++			if (!folio)
++				continue;
++			folio_unlock(folio);
++			folio_put(folio);
++			pages += 1;
++		}
++		fbatch.nr = 0;
++	}
++	return pages;
++}
++
++extern int ipc_shm_folio_move(struct inode *inode, struct mem_cgroup *from, struct mem_cgroup *to)
++{
 +	struct address_space *mapping = inode->i_mapping;
 +	loff_t lstart = 0;
 +	pgoff_t start = (lstart + PAGE_SIZE - 1) >> PAGE_SHIFT;
@@ -1705,12 +1923,12 @@ index 0005ab2c2..a7fdb6218 100644
 +			&fbatch, indices)) {
 +		for (i = 0; i < folio_batch_count(&fbatch); i++) {
 +			folio = fbatch.folios[i];
-+			if(!folio){
++			if (!folio)
 +				continue;
-+			}
++
 +			folio_unlock(folio);
-+			folio_put(folio); 
-+			if(err < 0)
++			folio_put(folio);
++			if (err < 0)
 +				continue;
 +			err = kmem_folio_move(folio, from, to);
 +		}
@@ -1718,9 +1936,8 @@ index 0005ab2c2..a7fdb6218 100644
 +	}
 +	return err;
 +}
-\ No newline at end of file
 diff --git a/net/core/dev.c b/net/core/dev.c
-index fce980d53..dc6edd70c 100644
+index fce980d53..a92a2e510 100644
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
 @@ -150,6 +150,12 @@
@@ -1745,22 +1962,23 @@ index fce980d53..dc6edd70c 100644
  /*
   * The @dev_base_head list is protected by @dev_base_lock and the rtnl
   * semaphore.
-@@ -381,6 +387,23 @@ static void netdev_name_node_alt_flush(struct net_device *dev)
+@@ -381,6 +387,24 @@ static void netdev_name_node_alt_flush(struct net_device *dev)
  static void list_netdevice(struct net_device *dev)
  {
  	struct net *net = dev_net(dev);
 +	struct mem_cgroup *memcg;
 +	struct cgroup_subsys_state *css;
 +	struct cgroup *cgrp;
-+	memcg = mem_cgroup_from_task(current);;
-+	if(memcg){
++	memcg = mem_cgroup_from_task(current);
++
++	if (memcg) {
 +		css = &memcg->css;
-+		if(css){
++		if (css) {
 +			cgrp = css->cgroup;
-+			if(cgrp){
-+				dev->cgroup = cgrp;  
-+				if(cgrp->net_list){
-+					net_ns_list_insert(cgrp->net_list, net);
++			if (cgrp) {
++				dev->cgroup = cgrp;
++				if (cgrp->net_list) {
++					net_ns_list_insert(cgrp->net_list, net, 0);
 +				}
 +			}
 +		}
@@ -1769,7 +1987,56 @@ index fce980d53..dc6edd70c 100644
  
  	ASSERT_RTNL();
  
-@@ -733,9 +756,38 @@ EXPORT_SYMBOL_GPL(dev_fill_forward_path);
+@@ -717,7 +741,48 @@ int dev_fill_forward_path(const struct net_device *dev, const u8 *daddr,
+ 	return ret;
+ }
+ EXPORT_SYMBOL_GPL(dev_fill_forward_path);
++unsigned long net_device_size(struct net_device *dev)
++{
++	char *addr;
++	struct inet6_dev *i6_dev;
++	struct in_device *i4_dev;
++	unsigned long space = 0;
++
++	if (!dev)
++		return 0;
++
++	addr = (char *)dev - dev->padded;
+ 
++	space += caculate_space(dev->_tx);
++	space += caculate_space(dev->_rx);
++	if (rcu_dereference_protected(dev->ingress_queue, 1))
++		space += caculate_space(rcu_dereference_protected(dev->ingress_queue, 1));
++
++	if (rcu_access_pointer(dev->ifalias))
++		space += caculate_space(rcu_access_pointer(dev->ifalias));
++
++	if (&dev->napi_list) {
++		struct napi_struct *p, *n;
++		struct sk_buff *skb;
++
++		list_for_each_entry_safe(p, n, &dev->napi_list, dev_list) {
++			skb = p->skb;
++			space += kmem_cache_size(skbuff_head_cache);  //obj_full_size(s)
++		}
++	}
++	space += caculate_space(addr);
++
++	i4_dev = dev->ip_ptr;
++	if (i4_dev) {
++		space += neigh_size(i4_dev->arp_parms);
++		space += devinet_size(&i4_dev->cnf);
++	}
++
++	i6_dev = __in6_dev_get(dev);
++	if (i6_dev)
++		space += ipv6_size(i6_dev);
++	return space;
++}
+ /**
+  *	__dev_get_by_name	- find a device by its name
+  *	@net: the applicable net namespace
+@@ -733,9 +798,38 @@ EXPORT_SYMBOL_GPL(dev_fill_forward_path);
  struct net_device *__dev_get_by_name(struct net *net, const char *name)
  {
  	struct netdev_name_node *node_name;
@@ -1780,36 +2047,36 @@ index fce980d53..dc6edd70c 100644
  
  	node_name = netdev_name_node_lookup(net, name);
 -	return node_name ? node_name->dev : NULL;
-+	if(!node_name)
++	if (!node_name)
 +		return NULL;
 +
-+	dev = node_name->dev;	
++	dev = node_name->dev;
 +
-+	if(recycle_cgroup && dev->cgroup && dev->cgroup == recycle_cgroup){
-+
++	if (ballon_cgroup && dev->cgroup && dev->cgroup == ballon_cgroup) {
 +		memcg_owner = mem_cgroup_from_task(current);
-+		if(!memcg_owner)
++		if (!memcg_owner)
 +			return NULL;
 +
 +		cgrp_owner = memcg_owner->css.cgroup;
-+		if(!cgrp_owner)
++		if (!cgrp_owner)
 +			return NULL;
 +
-+		memcg_recycle = get_cg_from_cgrp(recycle_cgroup, "memory");
-+		if(!memcg_recycle)
++		memcg_recycle = get_cg_from_cgrp(ballon_cgroup, "memory");
++		if (!memcg_recycle)
 +			return NULL;
 +
-+		net_device_move(dev, memcg_recycle, memcg_owner);		
++		net_ns_list_insert(ballon_cgroup->net_list, ns, -net_device_size(dev));
++		net_device_move(dev, memcg_recycle, memcg_owner);
 +		dev->cgroup = cgrp_owner;
 +		ns = current->nsproxy->net_ns;
-+		net_ns_list_insert(cgrp_owner->net_list, ns);
++		net_ns_list_insert(cgrp_owner->net_list, ns, 0);
 +	}
 +
 +	return dev;
  }
  EXPORT_SYMBOL(__dev_get_by_name);
  
-@@ -799,11 +851,34 @@ EXPORT_SYMBOL(dev_get_by_name);
+@@ -799,11 +893,34 @@ EXPORT_SYMBOL(dev_get_by_name);
  struct net_device *__dev_get_by_index(struct net *net, int ifindex)
  {
  	struct net_device *dev;
@@ -1819,143 +2086,157 @@ index fce980d53..dc6edd70c 100644
  	struct hlist_head *head = dev_index_hash(net, ifindex);
  
  	hlist_for_each_entry(dev, head, index_hlist)
- 		if (dev->ifindex == ifindex)
-+		{
-+			if(recycle_cgroup && dev->cgroup && dev->cgroup == recycle_cgroup){
+-		if (dev->ifindex == ifindex)
++		if (dev->ifindex == ifindex) {
++			if (ballon_cgroup && dev->cgroup && dev->cgroup == ballon_cgroup) {
 +				memcg_owner = mem_cgroup_from_task(current);
-+				if(!memcg_owner)
++				if (!memcg_owner)
 +					return NULL;
 +
 +				cgrp_owner = memcg_owner->css.cgroup;
-+				if(!cgrp_owner)
++				if (!cgrp_owner)
 +					return NULL;
 +
-+				memcg_recycle = get_cg_from_cgrp(recycle_cgroup, "memory");
-+				if(!memcg_recycle)
++				memcg_recycle = get_cg_from_cgrp(ballon_cgroup, "memory");
++				if (!memcg_recycle)
 +					return NULL;
 +
-+				net_device_move(dev, memcg_recycle, memcg_owner);		
++				net_ns_list_insert(ballon_cgroup->net_list, ns, -net_device_size(dev));
++				net_device_move(dev, memcg_recycle, memcg_owner);
 +				dev->cgroup = cgrp_owner;
 +				ns = current->nsproxy->net_ns;
-+				net_ns_list_insert(cgrp_owner->net_list, ns);
-+			}			
++				net_ns_list_insert(cgrp_owner->net_list, ns, 0);
++			}
  			return dev;
 +		}
  
  	return NULL;
  }
-@@ -11435,3 +11510,108 @@ static int __init net_dev_init(void)
+@@ -11435,3 +11552,122 @@ static int __init net_dev_init(void)
  }
  
  subsys_initcall(net_dev_init);
-+static int _net_device_move(struct net_device *dev, struct mem_cgroup *from, struct mem_cgroup *to){
 +
++
++
++static int _net_device_move(struct net_device *dev, struct mem_cgroup *from, struct mem_cgroup *to)
++{
 +	int err;
 +	char *addr = (char *)dev - dev->padded;
 +	struct inet6_dev *i6_dev;
 +	struct in_device *i4_dev;
-+	
++
 +	err = obj_cgroup_move(dev->_tx, from, to);
 +	err = obj_cgroup_move(dev->_rx, from, to);
-+	if(err < 0)
++	if (err < 0)
 +		return err;
 +
-+	if(rcu_dereference_protected(dev->ingress_queue, 1) != NULL){
++	if (rcu_dereference_protected(dev->ingress_queue, 1))
 +		err = kmem_cgroup_move(rcu_dereference_protected(dev->ingress_queue, 1), from, to);
-+	}
-+	if(rcu_access_pointer(dev->ifalias) != NULL){
++
++	if (rcu_access_pointer(dev->ifalias))
 +		err = kmem_cgroup_move(rcu_access_pointer(dev->ifalias), from, to);
-+	}
-+	if(&dev->napi_list != NULL){
-+		struct napi_struct *p,*n;
++
++	if (&dev->napi_list) {
++		struct napi_struct *p, *n;
 +		struct sk_buff *skb;
-+		list_for_each_entry_safe(p, n, &dev->napi_list, dev_list){
++
++		list_for_each_entry_safe(p, n, &dev->napi_list, dev_list) {
 +			skb = p->skb;
 +			err = kmem_cache_move(skbuff_head_cache, skb, 1, to);
 +		}
 +	}
 +	err = obj_cgroup_move(addr, from, to);
-+	if(err < 0)
++	if (err < 0)
 +		return err;
 +
 +	i4_dev = dev->ip_ptr;
-+	if(i4_dev){
++	if (i4_dev) {
 +		err = neigh_move(i4_dev->arp_parms, from, to);
 +		err = devinet_move(&i4_dev->cnf, from, to);
 +	}
-+	if(err < 0)
++	if (err < 0)
 +		return err;
-+			
++
 +	i6_dev = __in6_dev_get(dev);
-+	if(i6_dev){
-+		err = ipv6_dev_move(i6_dev, from, to);	
-+	}
++	if (i6_dev)
++		err = ipv6_dev_move(i6_dev, from, to);
++
 +	return err;
 +}
-+static int net_device_move(struct net_device *dev, struct mem_cgroup *from, struct mem_cgroup *to){
++
++static int net_device_move(struct net_device *dev, struct mem_cgroup *from, struct mem_cgroup *to)
++{
 +	int err;
-+	err =_net_device_move(dev, from, to);	
++	err = _net_device_move(dev, from, to);
 +	return err;
 +}
 +
-+extern int net_device_move_check(struct net *ns, struct cgroup *cgrp){
-+
++extern int net_device_move_check(struct net *ns, struct cgroup *cgrp)
++{
 +	struct net_device *ndev, *aux;
-+	int clear_times = 5;
 +	bool MAX_SET = true;
++	unsigned long mem_volume = 0, extra_mount = 0, total_mem = 0;
 +	struct mem_cgroup *memcg_to, *memcg_from = get_cg_from_cgrp(cgrp, "memory");
 +
-+	if(!memcg_from){
++	if (!memcg_from)
 +		return 0;
-+	}
 +
 +	for_each_netdev_safe(ns, ndev, aux) {
-+		if(ndev->cgroup == recycle_cgroup)
-+			ndev->residual_time++;
++		if (!ndev)
++			continue;
++		memcg_to = get_cg_from_cgrp(ballon_cgroup, "memory");
++		if (ndev->cgroup == cgrp) {
 +
-+		if(ndev->cgroup == cgrp){ 
-+
-+			memcg_to = get_cg_from_cgrp(recycle_cgroup, "memory");
-+			
-+			if(MAX_SET){
++			if (MAX_SET) {
 +				page_set_shadow_max(memcg_from, memcg_to);
 +				MAX_SET = false;
 +			}
 +
-+			ndev->cgroup = recycle_cgroup; 
-+			ndev->residual_time = 0;
-+			net_ns_list_insert(recycle_cgroup->net_list, ns);
-+
-+			if(net_device_move(ndev, memcg_from, memcg_to) < 0){
-+				recycle_cgroup_clear(clear_times);
-+				if(clear_times > 0)
-+					clear_times--;
-+			}		
++			mem_volume = net_device_size(ndev);
++			while (check_ballon_limits(mem_volume))//if the left volume is not enough
++			{
++				extra_mount = free_highest_volume();
++				while(1){
++					if(!check_ballon_limits(mem_volume))
++						break;
++					else {
++						cond_resched();
++					}
++				}
++			}
++			ndev->cgroup = ballon_cgroup;
++			total_mem += mem_volume;
++			net_device_move(ndev, memcg_from, memcg_to);
 +		}
 +	}
++	net_ns_list_insert(ballon_cgroup->net_list, ns, total_mem);
 +	return 0;
 +}
-+extern void net_device_free(struct net *ns, int times){
++
++extern void net_device_free(struct net *ns)
++{
 +	struct net_device *ndev, *aux;
++
 +	LIST_HEAD(dev_kill_list);
 +	rtnl_lock();
++
 +	for_each_netdev_safe(ns, ndev, aux) {
-+		if(ndev->cgroup == recycle_cgroup && ndev->residual_time >= times){
-+			if(ndev->features & NETIF_F_NETNS_LOCAL)
++		if (ndev->cgroup == ballon_cgroup) {
++			if (ndev->features & NETIF_F_NETNS_LOCAL)
 +				continue;
 +			if (ndev->rtnl_link_ops && ndev->rtnl_link_ops->dellink)
 +				ndev->rtnl_link_ops->dellink(ndev, &dev_kill_list);
 +			else
-+				unregister_netdevice_queue(ndev, &dev_kill_list);				
-+			continue;		
++				unregister_netdevice_queue(ndev, &dev_kill_list);
++			continue;
 +		}
 +	}
 +	unregister_netdevice_many(&dev_kill_list);
 +	rtnl_unlock();
 +}
-\ No newline at end of file
 diff --git a/net/core/neighbour.c b/net/core/neighbour.c
-index 4edd2176e..9cb5cf1cf 100644
+index 4edd2176e..1283ac941 100644
 --- a/net/core/neighbour.c
 +++ b/net/core/neighbour.c
 @@ -26,6 +26,7 @@
@@ -1966,26 +2247,44 @@ index 4edd2176e..9cb5cf1cf 100644
  #include <net/neighbour.h>
  #include <net/arp.h>
  #include <net/dst.h>
-@@ -3904,3 +3905,17 @@ static int __init neigh_init(void)
+@@ -3904,3 +3905,35 @@ static int __init neigh_init(void)
  }
  
  subsys_initcall(neigh_init);
-+extern int neigh_move(struct neigh_parms *neigh_p, struct mem_cgroup *from, struct mem_cgroup *to){
-+	int err;
++extern unsigned long neigh_size(struct neigh_parms *neigh_p)
++{
++	int space;
 +	struct neigh_sysctl_table *neigh_st;
-+	if(!neigh_p)
++
++	if (!neigh_p)
 +		return 0;
 +
 +	neigh_st = neigh_p->sysctl_table;
-+	if(!neigh_st)
-+		return 0;			
-+	
++	if (!neigh_st)
++		return 0;
++
++	space += caculate_space(neigh_st);
++	space += caculate_space(neigh_st->sysctl_header);
++	return space;
++}
++extern int neigh_move(struct neigh_parms *neigh_p, struct mem_cgroup *from, struct mem_cgroup *to)
++{
++	int err;
++	struct neigh_sysctl_table *neigh_st;
++
++	if (!neigh_p)
++		return 0;
++
++	neigh_st = neigh_p->sysctl_table;
++	if (!neigh_st)
++		return 0;
++
 +	err = kmem_cgroup_move(neigh_st, from, to);
 +	err = kmem_cgroup_move(neigh_st->sysctl_header, from, to);
 +	return err;
 +}
 diff --git a/net/core/net_namespace.c b/net/core/net_namespace.c
-index 7b69cf882..615a03965 100644
+index 7b69cf882..7e4707ce5 100644
 --- a/net/core/net_namespace.c
 +++ b/net/core/net_namespace.c
 @@ -20,6 +20,7 @@
@@ -1996,7 +2295,7 @@ index 7b69cf882..615a03965 100644
  
  #include <net/sock.h>
  #include <net/netlink.h>
-@@ -1399,3 +1400,69 @@ const struct proc_ns_operations netns_operations = {
+@@ -1399,3 +1400,76 @@ const struct proc_ns_operations netns_operations = {
  	.owner		= netns_owner,
  };
  #endif
@@ -2004,71 +2303,78 @@ index 7b69cf882..615a03965 100644
 +struct net_ns_list *net_ns_list_init(void)
 +{
 +	struct net_ns_list *head;
-+	head = kmalloc(sizeof(struct net_ns_list), GFP_KERNEL);
-+	if(head == NULL)
-+	{
++
++	head = kmalloc(sizeof(*head), GFP_KERNEL);
++	if (!head)
 +		return NULL;
-+	}
-+	INIT_LIST_HEAD(&(head->list));
++
++	INIT_LIST_HEAD(&head->list);
 +	return head;
 +}
-+int net_ns_list_add_tail(struct net_ns_list *head, struct net *net_ns){
++
++int net_ns_list_add_tail(struct net_ns_list *head, struct net *net_ns, long mem_delta)
++{
 +	struct net_ns_list *new_node;
-+	new_node = kmalloc(sizeof(struct net_ns_list), GFP_KERNEL);
-+	if(new_node == NULL)
-+	{
++
++	new_node = kmalloc(sizeof(*new_node), GFP_KERNEL);
++	if (!new_node)
 +		return -1;
-+	}
++
 +	memset(new_node, 0, sizeof(struct net_ns_list));
 +	new_node->net_ns = net_ns;
-+	
-+	list_add_tail(&(new_node->list), &(head->list));
++	new_node->residual_volume = mem_delta;
++
++	list_add_tail(&new_node->list, &head->list);
 +	return 0;
 +}
-+int net_ns_list_free(struct net_ns_list *head){
++
++int net_ns_list_free(struct net_ns_list *head)
++{
 +	struct net_ns_list *p, *q;
-+    list_for_each_entry_safe(p, q, &(head->list), list)
-+    {
-+		list_del(&(p->list));
++
++	list_for_each_entry_safe(p, q, &head->list, list) {
++		list_del(&p->list);
 +		kfree(p);
-+    }    	
-+	list_del(&(head->list));
++	}
++	list_del(&head->list);
 +	kfree(head);
 +	return 0;
 +}
++
 +int net_ns_list_delete_elem(struct net_ns_list *head, struct net *net_ns)
 +{
-+	struct net_ns_list *pos;
-+	if(list_empty(&(head->list)))
-+	{
++	struct net_ns_list *pos, *q;
++
++	if (list_empty(&head->list))
 +		return -1;
-+	}
-+	list_for_each_entry(pos,  &(head->list), list){
-+		if(pos->net_ns == net_ns)
-+		{
-+			list_del(&(pos->list));
++
++	list_for_each_entry_safe(pos, q, &head->list, list) {
++		if (pos->net_ns == net_ns) {
++			list_del(&pos->list);
 +			kfree(pos);
-+			return 0;
 +		}
 +	}
-+	return -2;
++	return 0;
 +}
-+int net_ns_list_insert(struct net_ns_list *head, struct net *net_ns)
++
++int net_ns_list_insert(struct net_ns_list *head, struct net *net_ns, long mem_delta)
 +{
-+	int err;
++	int err = 1;
 +	struct net_ns_list *pos;
-+	list_for_each_entry(pos, &(head->list), list){ 
-+		if(pos->net_ns == net_ns)
-+		{
-+			return 0;
++
++	list_for_each_entry(pos, &head->list, list) {
++		if (pos->net_ns == net_ns){
++			pos->residual_volume += mem_delta;
++			err = 0;
 +		}
 +	}
-+	err = net_ns_list_add_tail(head, net_ns); 
++	if(err)
++		err = net_ns_list_add_tail(head, net_ns, mem_delta);
 +	return err;
 +}
 \ No newline at end of file
 diff --git a/net/ipv4/devinet.c b/net/ipv4/devinet.c
-index b0acf6e19..5f6762c2b 100644
+index b0acf6e19..488b8c7a4 100644
 --- a/net/ipv4/devinet.c
 +++ b/net/ipv4/devinet.c
 @@ -53,6 +53,7 @@
@@ -2079,27 +2385,46 @@ index b0acf6e19..5f6762c2b 100644
  
  #include <net/arp.h>
  #include <net/ip.h>
-@@ -2793,3 +2794,17 @@ void __init devinet_init(void)
+@@ -2793,3 +2794,37 @@ void __init devinet_init(void)
  	rtnl_register(PF_INET, RTM_GETNETCONF, inet_netconf_get_devconf,
  		      inet_netconf_dump_devconf, 0);
  }
-+extern int devinet_move(struct ipv4_devconf *ipv4_p, struct mem_cgroup *from, struct mem_cgroup *to){
++
++extern unsigned long devinet_size(struct ipv4_devconf *ipv4_p)
++{
++	unsigned long space;
++	struct devinet_sysctl_table *devinet_st;
++
++	if (!ipv4_p)
++		return 0;
++
++	devinet_st = ipv4_p->sysctl;
++	if (!devinet_st)
++		return 0;
++
++	space += caculate_space(devinet_st);
++	space += caculate_space(devinet_st->sysctl_header);
++	return space;
++}
++
++extern int devinet_move(struct ipv4_devconf *ipv4_p, struct mem_cgroup *from, struct mem_cgroup *to)
++{
 +	int err;
 +	struct devinet_sysctl_table *devinet_st;
-+	if(!ipv4_p)
-+		return 0;			
-+	
++
++	if (!ipv4_p)
++		return 0;
++
 +	devinet_st = ipv4_p->sysctl;
-+	if(!devinet_st)
-+		return 0;				
-+	
++	if (!devinet_st)
++		return 0;
++
 +	err = kmem_cgroup_move(devinet_st, from, to);
 +	err = kmem_cgroup_move(devinet_st->sysctl_header, from, to);
 +	return err;
 +}
-\ No newline at end of file
 diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
-index faa47f9ea..229643932 100644
+index faa47f9ea..d70076577 100644
 --- a/net/ipv6/addrconf.c
 +++ b/net/ipv6/addrconf.c
 @@ -90,7 +90,7 @@
@@ -2111,32 +2436,62 @@ index faa47f9ea..229643932 100644
  #define	INFINITY_LIFE_TIME	0xFFFFFFFF
  
  #define IPV6_MAX_STRLEN \
-@@ -7386,3 +7386,29 @@ void addrconf_cleanup(void)
+@@ -7386,3 +7386,59 @@ void addrconf_cleanup(void)
  
  	destroy_workqueue(addrconf_wq);
  }
-+extern int ipv6_dev_move(struct inet6_dev *in_dev, struct mem_cgroup *from, struct mem_cgroup  *to){
++
++extern unsigned long ipv6_size(struct inet6_dev *in_dev)
++{
++	int space = 0;
++	struct ctl_table *table;
++	struct ipv6_devconf *p = &in_dev->cnf;
++
++	space += caculate_space(in_dev);
++	if (!in_dev->nd_parms)
++		return space;
++
++	space += neigh_size(in_dev->nd_parms);
++	if (!in_dev->stats.icmpv6msgdev)
++		return space;
++
++	space += caculate_space(in_dev->stats.icmpv6msgdev);
++	table = p->sysctl_header->ctl_table_arg;
++	if (!table)
++		return space;
++
++	space += caculate_space(table);
++	if (!p->sysctl_header)
++		return space;
++
++	space += caculate_space(p->sysctl_header);
++
++	return space;	
++}
++
++extern int ipv6_dev_move(struct inet6_dev *in_dev, struct mem_cgroup *from, struct mem_cgroup  *to)
++{
 +	int err;
 +	struct ctl_table *table;
 +	struct ipv6_devconf *p = &in_dev->cnf;
 +
 +	err = kmem_cgroup_move(in_dev, from, to);
-+	if(!in_dev->nd_parms)
++	if (!in_dev->nd_parms)
 +		return 0;
-+	
++
 +	err = neigh_move(in_dev->nd_parms, from, to);
-+	if(!in_dev->stats.icmpv6msgdev)
++	if (!in_dev->stats.icmpv6msgdev)
 +		return 0;
-+	
++
 +	err = kmem_cgroup_move(in_dev->stats.icmpv6msgdev, from, to);
-+	table =  p->sysctl_header->ctl_table_arg;
-+	if(!table)
-+		return 0;	
-+	
++	table = p->sysctl_header->ctl_table_arg;
++	if (!table)
++		return 0;
++
 +	err = kmem_cgroup_move(table, from, to);
-+	if(!p->sysctl_header)
-+		return 0;	
-+	
++	if (!p->sysctl_header)
++		return 0;
++
 +	err = kmem_cgroup_move(p->sysctl_header, from, to);
 +
 +	return err;
