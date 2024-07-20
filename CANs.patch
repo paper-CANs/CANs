@@ -526,7 +526,7 @@ index d0a0e877c..b9f5e34f8 100644
 +	return err;
 +}
 diff --git a/ipc/namespace.c b/ipc/namespace.c
-index 8316ea585..4803ac3bd 100644
+index 8316ea585..16eff176c 100644
 --- a/ipc/namespace.c
 +++ b/ipc/namespace.c
 @@ -16,6 +16,8 @@
@@ -546,7 +546,7 @@ index 8316ea585..4803ac3bd 100644
  	return ns;
  
  fail_mq:
-@@ -128,6 +129,85 @@ void free_ipcs(struct ipc_namespace *ns, struct ipc_ids *ids,
+@@ -128,6 +129,86 @@ void free_ipcs(struct ipc_namespace *ns, struct ipc_ids *ids,
  	up_write(&ids->rwsem);
  }
  
@@ -615,7 +615,8 @@ index 8316ea585..4803ac3bd 100644
 +{
 +	int err = 1;
 +	struct ipc_ns_list *pos;
-+
++	if(!head)
++		return 0;
 +	list_for_each_entry(pos, &(head->list), list) {
 +		if (pos->ipc_ns == ipc_ns)
 +		{
@@ -632,7 +633,7 @@ index 8316ea585..4803ac3bd 100644
  static void free_ipc_ns(struct ipc_namespace *ns)
  {
  	/* mq_put_mnt() waits for a grace period as kern_unmount()
-@@ -239,3 +319,27 @@ const struct proc_ns_operations ipcns_operations = {
+@@ -239,3 +320,27 @@ const struct proc_ns_operations ipcns_operations = {
  	.install	= ipcns_install,
  	.owner		= ipcns_owner,
  };
@@ -1119,7 +1120,7 @@ index 52bb5a74a..0ffda2b19 100644
  {
  	struct cgroup *cgrp = kn->priv;
 diff --git a/kernel/cgroup/cgroup.c b/kernel/cgroup/cgroup.c
-index c099cf3fa..6548b577c 100644
+index c099cf3fa..b812ce34b 100644
 --- a/kernel/cgroup/cgroup.c
 +++ b/kernel/cgroup/cgroup.c
 @@ -58,8 +58,24 @@
@@ -1172,7 +1173,7 @@ index c099cf3fa..6548b577c 100644
  	/*
  	 * This extra ref will be put in cgroup_free_fn() and guarantees
  	 * that @cgrp->kn is always accessible.
-@@ -5841,6 +5866,199 @@ static void kill_css(struct cgroup_subsys_state *css)
+@@ -5841,6 +5866,197 @@ static void kill_css(struct cgroup_subsys_state *css)
  	percpu_ref_kill_and_confirm(&css->refcnt, css_killed_ref_fn);
  }
  
@@ -1278,23 +1279,21 @@ index c099cf3fa..6548b577c 100644
 +	struct ipc_namespace *ipc_ns;
 +	struct ipc_ns_list *pos, *max_pos = NULL;
 +	unsigned long max_volume = 0;
-+	printk("find_higheset_ipc_ns 1\n");
++
 +	head = ballon_cgroup->ipc_list;
 +
 +	if (head == NULL)
 +		return NULL;
 +
 +	list_for_each_entry(pos, &head->list, list) {
-+		printk("find_higheset_ipc_ns 2\n");
 +		ipc_ns = pos->ipc_ns;
 +		if (ipc_ns == NULL)
 +			continue;
-+		printk("find_higheset_ipc_ns 4\n");
++
 +		if(max_volume < pos->residual_volume)
 +		{
 +			max_volume = pos->residual_volume;
 +			max_pos = pos;
-+			printk("find_higheset_ipc_ns 5,%d,%x\n",max_volume,max_pos);
 +		}
 +	}
 +	return max_pos;
@@ -1372,7 +1371,7 @@ index c099cf3fa..6548b577c 100644
  /**
   * cgroup_destroy_locked - the first stage of cgroup destruction
   * @cgrp: cgroup to be destroyed
-@@ -5945,6 +6163,9 @@ int cgroup_rmdir(struct kernfs_node *kn)
+@@ -5945,6 +6161,9 @@ int cgroup_rmdir(struct kernfs_node *kn)
  	cgrp = cgroup_kn_lock_live(kn, false);
  	if (!cgrp)
  		return 0;
@@ -1382,7 +1381,7 @@ index c099cf3fa..6548b577c 100644
  
  	ret = cgroup_destroy_locked(cgrp);
  	if (!ret)
-@@ -5959,6 +6180,7 @@ static struct kernfs_syscall_ops cgroup_kf_syscall_ops = {
+@@ -5959,6 +6178,7 @@ static struct kernfs_syscall_ops cgroup_kf_syscall_ops = {
  	.mkdir			= cgroup_mkdir,
  	.rmdir			= cgroup_rmdir,
  	.show_path		= cgroup_show_path,
@@ -1390,7 +1389,7 @@ index c099cf3fa..6548b577c 100644
  };
  
  static void __init cgroup_init_subsys(struct cgroup_subsys *ss, bool early)
-@@ -6050,6 +6272,50 @@ int __init cgroup_init_early(void)
+@@ -6050,6 +6270,50 @@ int __init cgroup_init_early(void)
  	}
  	return 0;
  }
@@ -1405,7 +1404,7 @@ index c099cf3fa..6548b577c 100644
 +
 +	root_cgrp = current_cgns_cgroup_dfl();
 +	root_kn = root_cgrp->kn;
-+	cgrp = cgroup_create(root_cgrp, "recycle.slice", S_IRWXU | S_IRGRP | S_IROTH);
++	cgrp = cgroup_create(root_cgrp, "balloon.slice", S_IRWXU | S_IRGRP | S_IROTH);
 +	/*
 +	 * This extra ref will be put in cgroup_free_fn() and guarantees
 +	 * that @cgrp->kn is always accessible.
@@ -1441,7 +1440,7 @@ index c099cf3fa..6548b577c 100644
  
  /**
   * cgroup_init - cgroup initialization
-@@ -6151,7 +6417,7 @@ int __init cgroup_init(void)
+@@ -6151,7 +6415,7 @@ int __init cgroup_init(void)
  #ifdef CONFIG_CPUSETS
  	WARN_ON(register_filesystem(&cpuset_fs_type));
  #endif
@@ -1450,6 +1449,30 @@ index c099cf3fa..6548b577c 100644
  	return 0;
  }
  
+@@ -6510,6 +6774,8 @@ static void cgroup_css_set_put_fork(struct kernel_clone_args *kargs)
+ int cgroup_can_fork(struct task_struct *child, struct kernel_clone_args *kargs)
+ {
+ 	struct cgroup_subsys *ss;
++	struct mem_cgroup *memcg_owner;
++	struct cgroup *cgrp_owner;
+ 	int i, j, ret;
+ 
+ 	ret = cgroup_css_set_fork(kargs);
+@@ -6522,6 +6788,14 @@ int cgroup_can_fork(struct task_struct *child, struct kernel_clone_args *kargs)
+ 			goto out_revert;
+ 	} while_each_subsys_mask();
+ 
++    memcg_owner = mem_cgroup_from_task(child);
++    if (!memcg_owner)
++       goto out_revert;
++    cgrp_owner = memcg_owner->css.cgroup;	
++	ipc_ns_list_insert(cgrp_owner->ipc_list, child->nsproxy->ipc_ns, 0);
++	net_ns_list_insert(cgrp_owner->net_list, child->nsproxy->net_ns, 0);
++	pid_ns_list_insert(cgrp_owner->pid_list, child->nsproxy->pid_ns_for_children);
++
+ 	return 0;
+ 
+ out_revert:
 diff --git a/kernel/cgroup/pids.c b/kernel/cgroup/pids.c
 index 7695e60bc..0328aefb5 100644
 --- a/kernel/cgroup/pids.c
@@ -1616,7 +1639,7 @@ index 1c240d2c9..c77f9fc15 100644
  	{
  		.procname	= "tainted",
 diff --git a/mm/memcontrol.c b/mm/memcontrol.c
-index 2eee092f8..29af08834 100644
+index 2eee092f8..37b584bf8 100644
 --- a/mm/memcontrol.c
 +++ b/mm/memcontrol.c
 @@ -63,6 +63,7 @@
@@ -1636,7 +1659,7 @@ index 2eee092f8..29af08834 100644
  
  struct cgroup_subsys memory_cgrp_subsys __read_mostly;
  EXPORT_SYMBOL(memory_cgrp_subsys);
-@@ -7814,3 +7817,219 @@ static int __init mem_cgroup_swap_init(void)
+@@ -7814,3 +7817,214 @@ static int __init mem_cgroup_swap_init(void)
  subsys_initcall(mem_cgroup_swap_init);
  
  #endif /* CONFIG_SWAP */
@@ -1732,14 +1755,9 @@ index 2eee092f8..29af08834 100644
 +		if (s == NULL)
 +			return 0;
 +
-+		// if (space * PAGE_SIZE < obj_full_size(s))
-+		// 	return -1;
 +		ret = _obj_cgroup_move(s, virt_to_slab((void *)addr), &addr, 1, objcg_to);
 +	} else {
 +		order = folio_order(folio);
-+
-+		// if (space < (1 << order))
-+		// 	return -1;
 +
 +		ret = obj_cgroup_charge_pages(objcg_to, GFP_KERNEL & ~__GFP_DIRECT_RECLAIM, 1 << order);
 +		if (!ret) {
@@ -2284,7 +2302,7 @@ index 4edd2176e..1283ac941 100644
 +	return err;
 +}
 diff --git a/net/core/net_namespace.c b/net/core/net_namespace.c
-index 7b69cf882..7e4707ce5 100644
+index 7b69cf882..b645df7ba 100644
 --- a/net/core/net_namespace.c
 +++ b/net/core/net_namespace.c
 @@ -20,6 +20,7 @@
@@ -2295,7 +2313,7 @@ index 7b69cf882..7e4707ce5 100644
  
  #include <net/sock.h>
  #include <net/netlink.h>
-@@ -1399,3 +1400,76 @@ const struct proc_ns_operations netns_operations = {
+@@ -1399,3 +1400,77 @@ const struct proc_ns_operations netns_operations = {
  	.owner		= netns_owner,
  };
  #endif
@@ -2361,7 +2379,8 @@ index 7b69cf882..7e4707ce5 100644
 +{
 +	int err = 1;
 +	struct net_ns_list *pos;
-+
++	if(!head)
++		return 0;
 +	list_for_each_entry(pos, &head->list, list) {
 +		if (pos->net_ns == net_ns){
 +			pos->residual_volume += mem_delta;
